@@ -96,7 +96,7 @@ class JournalIssue(Base):
     title = Column(String(300), nullable=False)
     abstract = Column(Text, nullable=True)
     pdf_file_url = Column(Text, nullable=False)
-    uploaded_by_admin_id = Column(UUID(as_uuid=False), ForeignKey("admins.id"), nullable=True)
+    uploaded_by_admin_id = Column(UUID(as_uuid=False), ForeignKey("admins.id", ondelete="SET NULL"), nullable=True)
     published_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (UniqueConstraint("issue_number", name="uq_issue_number"),)
@@ -112,7 +112,7 @@ class Event(Base):
     price = Column(Numeric(12, 0), nullable=True)  # مبلغ به تومان؛ برای رویداد رایگان خالی بماند
     event_date = Column(DateTime, nullable=True)
     is_active = Column(Boolean, default=True)
-    created_by_admin_id = Column(UUID(as_uuid=False), ForeignKey("admins.id"), nullable=True)
+    created_by_admin_id = Column(UUID(as_uuid=False), ForeignKey("admins.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     fields = relationship("EventField", back_populates="event", cascade="all, delete-orphan")
@@ -147,7 +147,7 @@ class Registration(Base):
     receipt_file_url = Column(Text, nullable=True)
     submitted_at = Column(DateTime, default=datetime.utcnow)
     reviewed_at = Column(DateTime, nullable=True)
-    reviewed_by_admin_id = Column(UUID(as_uuid=False), ForeignKey("admins.id"), nullable=True)
+    reviewed_by_admin_id = Column(UUID(as_uuid=False), ForeignKey("admins.id", ondelete="SET NULL"), nullable=True)
 
     event = relationship("Event", back_populates="registrations")
     user = relationship("UserAccount", back_populates="registrations")
@@ -176,7 +176,7 @@ class FAQ(Base):
     question = Column(Text, nullable=False)
     answer = Column(Text, nullable=False)
     display_order = Column(Integer, default=0)
-    created_by_admin_id = Column(UUID(as_uuid=False), ForeignKey("admins.id"), nullable=True)
+    created_by_admin_id = Column(UUID(as_uuid=False), ForeignKey("admins.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -185,7 +185,7 @@ class SupportMessage(Base):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
     user_id = Column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False)
-    admin_id = Column(UUID(as_uuid=False), ForeignKey("admins.id"), nullable=True)
+    admin_id = Column(UUID(as_uuid=False), ForeignKey("admins.id", ondelete="SET NULL"), nullable=True)
     direction = Column(Enum(MessageDirection), nullable=False)
     message_text = Column(Text, nullable=False)
     is_answered = Column(Boolean, default=False)

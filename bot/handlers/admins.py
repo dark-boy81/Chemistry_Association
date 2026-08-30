@@ -15,7 +15,15 @@ from telegram.ext import (
 from bot.handlers.start import is_admin_telegram_id
 from bot.keyboards import BTN_CANCEL, admin_menu_keyboard, cancel_reply_keyboard, main_reply_keyboard
 from database.db import get_session
-from database.models import Admin, AdminRole
+from database.models import (
+    FAQ,
+    Admin,
+    AdminRole,
+    Event,
+    JournalIssue,
+    Registration,
+    SupportMessage,
+)
 
 MAX_ADMINS = 5
 
@@ -35,6 +43,16 @@ def is_senior_admin(telegram_id: int) -> bool:
         return admin is not None and admin.role == AdminRole.SENIOR
     finally:
         session.close()
+
+
+def _detach_admin_references(session, admin_id: str) -> None:
+    """قبل از حذف یک ادمین، همه ارجاع‌های خارجی (رویداد/نشریه/FAQ/فیش/پیام) به او را
+    خالی می‌کند تا حذف با خطای foreign key مواجه نشود؛ خود رکوردها حذف نمی‌شوند."""
+    session.query(Event).filter_by(created_by_admin_id=admin_id).update({"created_by_admin_id": None})
+    session.query(JournalIssue).filter_by(uploaded_by_admin_id=admin_id).update({"uploaded_by_admin_id": None})
+    session.query(FAQ).filter_by(created_by_admin_id=admin_id).update({"created_by_admin_id": None})
+    session.query(Registration).filter_by(reviewed_by_admin_id=admin_id).update({"reviewed_by_admin_id": None})
+    session.query(SupportMessage).filter_by(admin_id=admin_id).update({"admin_id": None})
 
 
 def _admin_display_name(admin: Admin) -> str:
@@ -232,8 +250,13 @@ async def admin_remove_confirm_callback(update: Update, context: ContextTypes.DE
             return
         removed_telegram_id = target.telegram_id
         name = _admin_display_name(target)
+        _detach_admin_references(session, target.id)
         session.delete(target)
         session.commit()
+    except Exception:
+        session.rollback()
+        await query.edit_message_text("⚠️ خطایی هنگام حذف رخ داد. دوباره تلاش کنید.")
+        return
     finally:
         session.close()
 
@@ -323,8 +346,13 @@ async def admin_transfer_execute_callback(update: Update, context: ContextTypes.
         target.role = AdminRole.SENIOR
         target_telegram_id = target.telegram_id
         target_name = _admin_display_name(target)
+        _detach_admin_references(session, requester.id)
         session.delete(requester)
         session.commit()
+    except Exception:
+        session.rollback()
+        await query.edit_message_text("⚠️ خطایی هنگام انتقال ارشدیت رخ داد. دوباره تلاش کنید.")
+        return
     finally:
         session.close()
 

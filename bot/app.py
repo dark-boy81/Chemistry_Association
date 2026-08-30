@@ -4,7 +4,7 @@
 """
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
-from bot.handlers.admin_menu import admin_menu_callback, admin_menu_text_entry, admin_submenu_callback
+from bot.handlers.admin_menu import admin_menu_callback, admin_menu_text_entry
 from bot.handlers.admins import (
     admin_add_start,
     admin_manage_menu_callback,
@@ -54,8 +54,14 @@ from bot.handlers.journal import (
     journal_view_callback,
 )
 from bot.handlers.start import start_command
+from bot.handlers.stats import (
+    admin_stats_export_callback,
+    admin_stats_menu_callback,
+    admin_stats_pick_event_callback,
+)
 from bot.handlers.user_menu import back_to_main_note_callback
 from bot.keyboards import BTN_ADMIN_PANEL, BTN_CONTACT, BTN_EVENTS, BTN_FAQ, BTN_JOURNAL
+from bot.notifications import send_event_reminders_job
 from config import BOT_TOKEN
 
 
@@ -157,10 +163,19 @@ def build_application() -> Application:
         CallbackQueryHandler(admin_transfer_execute_callback, pattern=r"^admin_transfer_execute_(?P<admin_id>.+)$")
     )
 
-    # بخش‌های باقی‌مانده placeholder (آمار)
-    application.add_handler(CallbackQueryHandler(admin_submenu_callback, pattern="^admin_stats$"))
+    # آمار و گزارش
+    application.add_handler(CallbackQueryHandler(admin_stats_menu_callback, pattern="^admin_stats$"))
+    application.add_handler(
+        CallbackQueryHandler(admin_stats_pick_event_callback, pattern="^admin_stats_pick_event$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(admin_stats_export_callback, pattern=r"^admin_stats_export_(?P<event_id>.+)$")
+    )
 
     # دکمه مشترک «بازگشت به منوی اصلی» در زیرمنوها
     application.add_handler(CallbackQueryHandler(back_to_main_note_callback, pattern="^back_to_main_note$"))
+
+    # Job زمان‌بندی‌شده: هر ۳۰ دقیقه بررسی رویدادهای نزدیک برای ارسال یادآوری خودکار
+    application.job_queue.run_repeating(send_event_reminders_job, interval=1800, first=15)
 
     return application

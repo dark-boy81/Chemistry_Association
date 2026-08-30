@@ -112,6 +112,7 @@ class Event(Base):
     price = Column(Numeric(12, 0), nullable=True)  # مبلغ به تومان؛ برای رویداد رایگان خالی بماند
     event_date = Column(DateTime, nullable=True)
     is_active = Column(Boolean, default=True)
+    reminder_sent = Column(Boolean, default=False)
     created_by_admin_id = Column(UUID(as_uuid=False), ForeignKey("admins.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 

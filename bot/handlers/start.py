@@ -40,7 +40,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     text = (
         f"سلام {tg_user.first_name} 👋\n\n"
-        "به ربات انجمن علمی شیمی دانشگاه آزاد گرگان خوش آمدید.\n"
+        "به ربات انجمن علمی شیمی و نشریه پژواک شیمی خوش آمدید.\n"
         "از دکمه‌های پایین صفحه استفاده کنید 👇"
     )
     await update.message.reply_text(text, reply_markup=main_reply_keyboard(admin))

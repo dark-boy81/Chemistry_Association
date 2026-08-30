@@ -9,10 +9,6 @@ from telegram.ext import ContextTypes
 from bot.handlers.start import is_admin_telegram_id
 from bot.keyboards import admin_menu_keyboard
 
-ADMIN_PLACEHOLDER_TEXT = {
-    "admin_stats": "📊 آمار و گزارش‌ها در فاز بعدی تکمیل می‌شود.",
-}
-
 
 async def admin_menu_text_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """ورودی از دکمه ثابت «🛠 پنل مدیریت»."""
@@ -34,13 +30,3 @@ async def admin_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text(
         "پنل مدیریت — یکی از گزینه‌ها را انتخاب کنید:", reply_markup=admin_menu_keyboard()
     )
-
-
-async def admin_submenu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    if not is_admin_telegram_id(query.from_user.id):
-        await query.edit_message_text("⛔️ شما به این بخش دسترسی ندارید.")
-        return
-    text = ADMIN_PLACEHOLDER_TEXT.get(query.data, "این بخش هنوز آماده نیست.")
-    await query.edit_message_text(text, reply_markup=admin_menu_keyboard())

@@ -20,6 +20,7 @@ from telegram.ext import (
 
 from bot.handlers.start import is_admin_telegram_id
 from bot.keyboards import BTN_CANCEL, cancel_reply_keyboard, main_reply_keyboard
+from bot.notifications import broadcast_to_all_users
 from database.db import get_session
 from database.models import JournalIssue
 
@@ -412,6 +413,11 @@ async def admin_journal_receive_abstract(update: Update, context: ContextTypes.D
     await update.message.reply_text(
         f"✅ شماره {data['issue_number']} با عنوان «{data['title']}» با موفقیت اضافه شد.",
         reply_markup=main_reply_keyboard(True),
+    )
+    await broadcast_to_all_users(
+        context.bot,
+        f"📚 شماره جدید نشریه پژواک شیمی منتشر شد!\n\nشماره {data['issue_number']} — {data['title']}\n\n"
+        "برای مشاهده و دانلود، از منوی «📚 نشریه پژواک شیمی» استفاده کنید.",
     )
     return ConversationHandler.END
 

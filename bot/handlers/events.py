@@ -29,6 +29,7 @@ from telegram.ext import (
 
 from bot.handlers.start import is_admin_telegram_id
 from bot.keyboards import BTN_CANCEL, cancel_reply_keyboard, main_reply_keyboard
+from bot.notifications import broadcast_to_all_users, try_promote_waitlist
 from database.db import get_session
 from database.models import (
     Admin,
@@ -235,6 +236,7 @@ async def event_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TY
     event = get_event_by_id(event_id)
     text, keyboard = _event_detail_view(event, query.from_user.id)
     await query.edit_message_text("✅ ثبت‌نام شما لغو شد.\n\n" + text, reply_markup=keyboard)
+    await try_promote_waitlist(context.bot, event_id)
 
 
 # --- گفتگوی ثبت‌نام در رویداد ---
@@ -620,6 +622,10 @@ async def admin_event_confirm_fields(update: Update, context: ContextTypes.DEFAU
         text="می‌توانید از منوی پایین صفحه ادامه دهید.",
         reply_markup=main_reply_keyboard(True),
     )
+    await broadcast_to_all_users(
+        context.bot,
+        f"📅 رویداد جدید اضافه شد: «{title}»\n\nبرای مشاهده جزئیات و ثبت‌نام، از منوی «📅 رویدادها» استفاده کنید.",
+    )
     return ConversationHandler.END
 
 
@@ -778,6 +784,7 @@ async def _decide_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE, ap
         tracking_code = registration.tracking_code
         user_telegram_id = user.telegram_id if user else None
         event_title = event.title if event else ""
+        event_id = registration.event_id
     finally:
         session.close()
 
@@ -796,6 +803,9 @@ async def _decide_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE, ap
             chat_id=user_telegram_id,
             text=f"ثبت‌نام شما برای «{event_title}» (کد پیگیری {tracking_code}) {status_text}",
         )
+
+    if not approve:
+        await try_promote_waitlist(context.bot, event_id)
 
 
 async def admin_receipt_approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

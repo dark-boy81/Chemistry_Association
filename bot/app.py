@@ -15,6 +15,7 @@ from bot.handlers.admins import (
     admin_transfer_start,
     build_admin_add_conversation,
 )
+from bot.handlers.broadcast import build_admin_broadcast_conversation
 from bot.handlers.contact import build_admin_reply_conversation, build_contact_conversation
 from bot.handlers.events import (
     admin_event_delete_confirm_callback,
@@ -29,6 +30,7 @@ from bot.handlers.events import (
     build_admin_event_add_conversation,
     build_event_cancel_conversation,
     build_event_edit_conversation,
+    build_event_notify_conversation,
     build_event_registration_conversation,
     event_cancel_callback,
     event_list_callback,
@@ -81,12 +83,14 @@ def build_application() -> Application:
     application.add_handler(build_admin_event_add_conversation())
     application.add_handler(build_event_edit_conversation())
     application.add_handler(build_event_cancel_conversation())
+    application.add_handler(build_event_notify_conversation())
     application.add_handler(build_event_registration_conversation())
     application.add_handler(build_faq_add_conversation())
     application.add_handler(build_faq_edit_conversation())
     application.add_handler(build_contact_conversation(BTN_CONTACT))
     application.add_handler(build_admin_reply_conversation())
     application.add_handler(build_admin_add_conversation())
+    application.add_handler(build_admin_broadcast_conversation())
 
     # دکمه‌های ثابت پایین صفحه (منوی اصلی)
     application.add_handler(MessageHandler(filters.Text([BTN_JOURNAL]), journal_menu_text_entry))

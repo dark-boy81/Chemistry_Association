@@ -562,7 +562,7 @@ async def admin_event_detail_callback(update: Update, context: ContextTypes.DEFA
     buttons = [
         [
             InlineKeyboardButton("✏️ عنوان", callback_data=f"admin_event_edit_title_{event_id}"),
-            InlineKeyboardButton("✏️ توضیحات", callback_data=f"admin_event_edit_description_{event_id}"),
+            InlineKeyboardButton("✏️ توضیحات", callback_data=f"admin_event_edit_desc_{event_id}"),
         ],
         [
             InlineKeyboardButton("✏️ ظرفیت", callback_data=f"admin_event_edit_capacity_{event_id}"),
@@ -573,6 +573,9 @@ async def admin_event_detail_callback(update: Update, context: ContextTypes.DEFA
             InlineKeyboardButton("✏️ تاریخ", callback_data=f"admin_event_edit_date_{event_id}"),
         ],
     ]
+    buttons.append(
+        [InlineKeyboardButton("📢 پیام به ثبت‌نام‌کنندگان", callback_data=f"admin_event_notify_{event_id}")]
+    )
     if is_active:
         buttons.append([InlineKeyboardButton("🚫 لغو رویداد", callback_data=f"admin_event_cancelev_{event_id}")])
     buttons.append([InlineKeyboardButton("🗑 حذف کامل رویداد", callback_data=f"admin_event_delask_{event_id}")])
@@ -806,7 +809,7 @@ def build_admin_event_add_conversation() -> ConversationHandler:
 
 EVENT_EDIT_PROMPTS = {
     "title": "عنوان جدید را بفرستید:",
-    "description": "توضیحات جدید را بفرستید (برای خالی‌کردن، - بفرستید):",
+    "desc": "توضیحات جدید را بفرستید (برای خالی‌کردن، - بفرستید):",
     "capacity": "ظرفیت جدید را بفرستید (فقط عدد):",
     "price": "هزینه جدید را بفرستید (فقط عدد، یا برای رایگان‌کردن - بفرستید):",
     "card": "شماره کارت جدید را بفرستید (برای حذف، - بفرستید):",
@@ -859,7 +862,7 @@ async def admin_event_edit_receive_value(update: Update, context: ContextTypes.D
                 await update.message.reply_text("عنوان نمی‌تواند خالی باشد.")
                 return WAITING_EVENT_EDIT_VALUE
             event.title = text
-        elif field == "description":
+        elif field == "desc":
             event.description = None if text == "-" else text
         elif field == "capacity":
             if not text.isdigit() or int(text) <= 0:
@@ -919,7 +922,7 @@ def build_event_edit_conversation() -> ConversationHandler:
         entry_points=[
             CallbackQueryHandler(
                 admin_event_edit_field_start,
-                pattern=r"^admin_event_edit_(?P<field>title|description|capacity|price|card|date)_(?P<event_id>.+)$",
+                pattern=r"^admin_event_edit_(?P<field>title|desc|capacity|price|card|date)_(?P<event_id>.+)$",
             )
         ],
         states={
@@ -979,8 +982,25 @@ async def admin_event_delete_confirm_callback(update: Update, context: ContextTy
             await query.edit_message_text("این رویداد قبلاً حذف شده است.")
             return
         title = event.title
-        session.delete(event)  # cascade به event_fields / registrations / registration_field_values
+
+        # حذف دستی و به‌ترتیب صحیح: registration_field_values قبل از registrations و
+        # event_fields، چون به هردوشون وابسته‌ست و cascade خودکار ORM ترتیبش را درست
+        # تشخیص نمی‌دهد (دقیقاً همان کلاس مشکلی که هنگام حذف ادمین داشتیم).
+        registration_ids = [
+            r.id for r in session.query(Registration.id).filter_by(event_id=event_id).all()
+        ]
+        if registration_ids:
+            session.query(RegistrationFieldValue).filter(
+                RegistrationFieldValue.registration_id.in_(registration_ids)
+            ).delete(synchronize_session=False)
+        session.query(Registration).filter_by(event_id=event_id).delete(synchronize_session=False)
+        session.query(EventField).filter_by(event_id=event_id).delete(synchronize_session=False)
+        session.delete(event)
         session.commit()
+    except Exception:
+        session.rollback()
+        await query.edit_message_text("⚠️ خطایی هنگام حذف رخ داد. دوباره تلاش کنید.")
+        return
     finally:
         session.close()
 
@@ -1089,7 +1109,110 @@ def build_event_cancel_conversation() -> ConversationHandler:
     )
 
 
+# --- پیام به ثبت‌نام‌کنندگان یک رویداد خاص (بدون تغییر وضعیت/لغو رویداد) ---
+
+WAITING_EVENT_NOTIFY_MESSAGE = 0
+
+
+async def admin_event_notify_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    if not is_admin_telegram_id(query.from_user.id):
+        await query.edit_message_text("⛔️ شما به این بخش دسترسی ندارید.")
+        return ConversationHandler.END
+
+    event_id = context.match.group("event_id")
+    event = get_event_by_id(event_id)
+    if event is None:
+        await query.edit_message_text("این رویداد یافت نشد.")
+        return ConversationHandler.END
+
+    context.user_data["notifying_event"] = event_id
+    await query.edit_message_text(f"📢 در حال ارسال پیام به ثبت‌نام‌کنندگان «{event.title}»...")
+    await context.bot.send_message(
+        chat_id=query.from_user.id,
+        text="متن پیامی که فقط برای ثبت‌نام‌کنندگان فعال این رویداد ارسال شود را بنویسید "
+        "(مثلاً تغییر مکان یا زمان برگزاری):",
+        reply_markup=cancel_reply_keyboard(),
+    )
+    return WAITING_EVENT_NOTIFY_MESSAGE
+
+
+async def admin_event_notify_receive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    event_id = context.user_data.get("notifying_event")
+    if not event_id:
+        return ConversationHandler.END
+
+    text = update.message.text.strip()
+    session = get_session()
+    try:
+        event = session.query(Event).filter_by(id=event_id).first()
+        if event is None:
+            await update.message.reply_text("این رویداد یافت نشد.", reply_markup=main_reply_keyboard(True))
+            context.user_data.pop("notifying_event", None)
+            return ConversationHandler.END
+
+        participants = (
+            session.query(Registration)
+            .filter(Registration.event_id == event_id, Registration.status.in_(ACTIVE_STATUSES))
+            .all()
+        )
+        recipients = []
+        for reg in participants:
+            user = session.query(UserAccount).filter_by(id=reg.user_id).first()
+            if user:
+                recipients.append(user.telegram_id)
+        title = event.title
+    finally:
+        session.close()
+
+    context.user_data.pop("notifying_event", None)
+    await update.message.reply_text(
+        f"⏳ در حال ارسال به {len(recipients)} نفر از ثبت‌نام‌کنندگان «{title}»...",
+        reply_markup=main_reply_keyboard(True),
+    )
+
+    for telegram_id in recipients:
+        try:
+            await context.bot.send_message(
+                chat_id=telegram_id, text=f"📢 پیام از ادمین درباره رویداد «{title}»:\n\n{text}"
+            )
+        except Exception:
+            pass
+        await asyncio.sleep(0.05)
+
+    await context.bot.send_message(chat_id=update.effective_user.id, text="✅ پیام ارسال شد.")
+    return ConversationHandler.END
+
+
+async def admin_event_notify_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.pop("notifying_event", None)
+    admin = is_admin_telegram_id(update.effective_user.id)
+    await update.message.reply_text("ارسال پیام لغو شد.", reply_markup=main_reply_keyboard(admin))
+    return ConversationHandler.END
+
+
+def build_event_notify_conversation() -> ConversationHandler:
+    cancel_handlers = [
+        CommandHandler("cancel", admin_event_notify_cancel),
+        MessageHandler(filters.Text([BTN_CANCEL]), admin_event_notify_cancel),
+    ]
+    return ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(admin_event_notify_start, pattern=r"^admin_event_notify_(?P<event_id>.+)$")
+        ],
+        states={
+            WAITING_EVENT_NOTIFY_MESSAGE: [
+                *cancel_handlers,
+                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_notify_receive),
+            ],
+        },
+        fallbacks=cancel_handlers,
+    )
+
+
 # --- تایید/رد فیش‌های واریزی توسط ادمین ---
+
 
 
 async def admin_receipts_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

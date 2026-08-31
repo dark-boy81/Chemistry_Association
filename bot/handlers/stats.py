@@ -115,13 +115,19 @@ def _build_registrations_excel(event_id: str):
             .all()
         )
 
+        has_price = bool(event.price)
+
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "ثبت‌نام‌ها"
 
-        headers = ["کد پیگیری", "کاربر تلگرام", "وضعیت"] + [f.field_label for f in fields] + ["تاریخ ثبت‌نام"]
+        headers = ["کد پیگیری", "کاربر تلگرام", "وضعیت"] + [f.field_label for f in fields]
+        if has_price:
+            headers.append("مبلغ پرداختی (تومان)")
+        headers.append("تاریخ ثبت‌نام")
         sheet.append(headers)
 
+        total_approved = 0
         for reg in registrations:
             user = session.query(UserAccount).filter_by(id=reg.user_id).first()
             values = session.query(RegistrationFieldValue).filter_by(registration_id=reg.id).all()
@@ -133,8 +139,21 @@ def _build_registrations_excel(event_id: str):
 
             row = [reg.tracking_code, user_label, STATUS_LABELS.get(reg.status, reg.status)]
             row.extend(value_map.get(f.id, "") for f in fields)
+            if has_price:
+                # مبلغ فقط برای کسانی که واقعاً فیش فرستاده‌اند (یعنی رایگان نبوده) نمایش داده می‌شود
+                row.append(int(event.price) if reg.receipt_file_url else "")
+                if reg.status == RegistrationStatus.APPROVED:
+                    total_approved += int(event.price)
             row.append(reg.submitted_at.strftime("%Y-%m-%d %H:%M") if reg.submitted_at else "")
             sheet.append(row)
+
+        if has_price:
+            amount_col_index = 3 + len(fields)  # ایندکس ستون «مبلغ پرداختی» در headers
+            summary = ["" for _ in headers]
+            summary[0] = "جمع مبلغ ثبت‌نامی‌های تاییدشده:"
+            summary[amount_col_index] = total_approved
+            sheet.append([])
+            sheet.append(summary)
 
         for i in range(1, len(headers) + 1):
             sheet.column_dimensions[get_column_letter(i)].width = 22

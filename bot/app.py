@@ -17,6 +17,9 @@ from bot.handlers.admins import (
 )
 from bot.handlers.contact import build_admin_reply_conversation, build_contact_conversation
 from bot.handlers.events import (
+    admin_event_delete_confirm_callback,
+    admin_event_delete_prompt_callback,
+    admin_event_detail_callback,
     admin_event_list_callback,
     admin_events_menu_callback,
     admin_receipt_approve_callback,
@@ -24,6 +27,8 @@ from bot.handlers.events import (
     admin_receipt_view_callback,
     admin_receipts_menu_callback,
     build_admin_event_add_conversation,
+    build_event_cancel_conversation,
+    build_event_edit_conversation,
     build_event_registration_conversation,
     event_cancel_callback,
     event_list_callback,
@@ -74,6 +79,8 @@ def build_application() -> Application:
     application.add_handler(build_journal_add_conversation())
     application.add_handler(build_journal_edit_conversation())
     application.add_handler(build_admin_event_add_conversation())
+    application.add_handler(build_event_edit_conversation())
+    application.add_handler(build_event_cancel_conversation())
     application.add_handler(build_event_registration_conversation())
     application.add_handler(build_faq_add_conversation())
     application.add_handler(build_faq_edit_conversation())
@@ -122,6 +129,15 @@ def build_application() -> Application:
     # مدیریت رویدادها
     application.add_handler(CallbackQueryHandler(admin_events_menu_callback, pattern="^admin_events$"))
     application.add_handler(CallbackQueryHandler(admin_event_list_callback, pattern="^admin_event_list$"))
+    application.add_handler(
+        CallbackQueryHandler(admin_event_detail_callback, pattern=r"^admin_event_detail_(?P<event_id>.+)$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(admin_event_delete_prompt_callback, pattern=r"^admin_event_delask_(?P<event_id>.+)$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(admin_event_delete_confirm_callback, pattern=r"^admin_event_delyes_(?P<event_id>.+)$")
+    )
 
     # تایید/رد فیش‌های واریزی
     application.add_handler(CallbackQueryHandler(admin_receipts_menu_callback, pattern="^admin_receipts$"))

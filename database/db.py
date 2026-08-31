@@ -32,6 +32,8 @@ def _apply_lightweight_migrations() -> None:
     نباشد آن را اضافه می‌کند. جایگزین ساده‌ای برای Alembic تا وقتی پروژه به آن نیاز پیدا کند."""
     statements = [
         "ALTER TABLE events ADD COLUMN IF NOT EXISTS reminder_sent BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE events ADD COLUMN IF NOT EXISTS card_number VARCHAR(64)",
+        "ALTER TABLE registrations DROP CONSTRAINT IF EXISTS uq_event_user",
     ]
     with engine.begin() as conn:
         for statement in statements:

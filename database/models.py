@@ -110,6 +110,7 @@ class Event(Base):
     description = Column(Text, nullable=True)
     capacity = Column(Integer, nullable=False)
     price = Column(Numeric(12, 0), nullable=True)  # مبلغ به تومان؛ برای رویداد رایگان خالی بماند
+    card_number = Column(String(64), nullable=True)  # شماره کارت برای واریز وجه رویدادهای غیررایگان
     event_date = Column(DateTime, nullable=True)
     is_active = Column(Boolean, default=True)
     reminder_sent = Column(Boolean, default=False)
@@ -155,8 +156,9 @@ class Registration(Base):
     field_values = relationship(
         "RegistrationFieldValue", back_populates="registration", cascade="all, delete-orphan"
     )
-
-    __table_args__ = (UniqueConstraint("event_id", "user_id", name="uq_event_user"),)
+    # توجه: قبلاً یک UniqueConstraint روی (event_id, user_id) بود که مانع ثبت‌نام دوباره
+    # بعد از لغو/رد می‌شد؛ حذف شد تا کاربر بتواند بعد از لغو یا رد دوباره ثبت‌نام کند
+    # (چند سطر تاریخی برای یک کاربر در یک رویداد مجاز است).
 
 
 class RegistrationFieldValue(Base):

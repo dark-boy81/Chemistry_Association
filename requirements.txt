@@ -5,3 +5,4 @@ python-dotenv==1.0.1
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 openpyxl==3.1.5
+jdatetime==6.1.0

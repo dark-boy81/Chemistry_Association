@@ -195,3 +195,18 @@ class SupportMessage(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("UserAccount", back_populates="messages")
+
+
+class AdminActivityLog(Base):
+    """لاگ فعالیت ادمین‌ها — برای شفافیت بین ادمین‌های مختلف که چه کسی چه کاری کرده.
+    عمداً به Admin.id لینک نشده (به‌جایش telegram_id/username مستقیم ذخیره می‌شود)
+    تا حتی اگر آن ادمین بعداً حذف شود، تاریخچه فعالیتش باقی بماند."""
+
+    __tablename__ = "admin_activity_logs"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    admin_telegram_id = Column(BigInteger, nullable=False)
+    admin_username = Column(String(100), nullable=True)
+    action = Column(String(100), nullable=False)
+    description = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)

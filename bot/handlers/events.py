@@ -35,6 +35,7 @@ from telegram.ext import (
 )
 
 from bot.handlers.start import is_admin_telegram_id
+from bot.activity_log import log_admin_activity
 from bot.keyboards import BTN_CANCEL, cancel_reply_keyboard, main_reply_keyboard
 from bot.notifications import broadcast_to_all_users, try_promote_waitlist
 from database.db import get_session
@@ -222,7 +223,7 @@ def _event_detail_view(event: Event, telegram_id: int):
         lines.append("")
         lines.append(f"وضعیت ثبت‌نام شما: {STATUS_LABELS.get(existing.status, existing.status)}")
         lines.append(f"کد پیگیری: {existing.tracking_code}")
-        if existing.status in (RegistrationStatus.PENDING, RegistrationStatus.WAITLISTED):
+        if existing.status in ACTIVE_STATUSES:
             buttons.append([InlineKeyboardButton("❌ لغو ثبت‌نام", callback_data=f"event_cancel_{existing.id}")])
 
     buttons.append([InlineKeyboardButton("⬅️ بازگشت به لیست رویدادها", callback_data="event_list")])
@@ -254,9 +255,10 @@ async def event_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TY
         if registration is None:
             await query.edit_message_text("این ثبت‌نام یافت نشد.")
             return
-        if registration.status not in (RegistrationStatus.PENDING, RegistrationStatus.WAITLISTED):
+        if registration.status not in ACTIVE_STATUSES:
             await query.answer("این ثبت‌نام قابل لغو نیست.", show_alert=True)
             return
+        was_approved_paid = registration.status == RegistrationStatus.APPROVED and registration.receipt_file_url
         registration.status = RegistrationStatus.CANCELLED
         event_id = registration.event_id
         session.commit()
@@ -265,7 +267,12 @@ async def event_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     event = get_event_by_id(event_id)
     text, keyboard = _event_detail_view(event, query.from_user.id)
-    await query.edit_message_text("✅ ثبت‌نام شما لغو شد.\n\n" + text, reply_markup=keyboard)
+    note = (
+        "✅ ثبت‌نام شما لغو شد.\n\n⚠️ چون قبلاً وجه واریز کرده بودید، برای بازگشت وجه با ادمین (بخش «ارتباط با ادمین») در ارتباط باشید.\n\n"
+        if was_approved_paid
+        else "✅ ثبت‌نام شما لغو شد.\n\n"
+    )
+    await query.edit_message_text(note + text, reply_markup=keyboard)
     await try_promote_waitlist(context.bot, event_id)
 
 
@@ -752,6 +759,7 @@ async def admin_event_confirm_fields(update: Update, context: ContextTypes.DEFAU
         session.close()
 
     context.user_data.pop("new_event", None)
+    log_admin_activity(query.from_user.id, query.from_user.username, "event_created", f"رویداد «{title}» را ساخت")
     await query.edit_message_text(f"✅ رویداد «{title}» با موفقیت ساخته شد.")
     await context.bot.send_message(
         chat_id=query.from_user.id,
@@ -894,10 +902,17 @@ async def admin_event_edit_receive_value(update: Update, context: ContextTypes.D
                 event.event_date = parsed
 
         session.commit()
+        event_title = event.title
     finally:
         session.close()
 
     context.user_data.pop("editing_event", None)
+    log_admin_activity(
+        update.effective_user.id,
+        update.effective_user.username,
+        "event_edited",
+        f"رویداد «{event_title}» را ویرایش کرد (فیلد: {field})",
+    )
     await update.message.reply_text("✅ تغییرات ذخیره شد.", reply_markup=main_reply_keyboard(True))
 
     if capacity_increased:
@@ -1005,6 +1020,7 @@ async def admin_event_delete_confirm_callback(update: Update, context: ContextTy
         session.close()
 
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ بازگشت به لیست", callback_data="admin_event_list")]])
+    log_admin_activity(query.from_user.id, query.from_user.username, "event_deleted", f"رویداد «{title}» را حذف کرد")
     await query.edit_message_text(f"✅ رویداد «{title}» به‌طور کامل حذف شد.", reply_markup=keyboard)
 
 
@@ -1064,6 +1080,9 @@ async def admin_event_cancelev_receive(update: Update, context: ContextTypes.DEF
         session.close()
 
     context.user_data.pop("cancelling_event", None)
+    log_admin_activity(
+        update.effective_user.id, update.effective_user.username, "event_cancelled", f"رویداد «{title}» را لغو کرد"
+    )
     await update.message.reply_text(
         f"✅ رویداد «{title}» لغو شد. در حال اطلاع‌رسانی به {len(recipients)} نفر...",
         reply_markup=main_reply_keyboard(True),
@@ -1167,6 +1186,12 @@ async def admin_event_notify_receive(update: Update, context: ContextTypes.DEFAU
         session.close()
 
     context.user_data.pop("notifying_event", None)
+    log_admin_activity(
+        update.effective_user.id,
+        update.effective_user.username,
+        "event_notify",
+        f"به {len(recipients)} نفر از ثبت‌نام‌کنندگان «{title}» پیام فرستاد",
+    )
     await update.message.reply_text(
         f"⏳ در حال ارسال به {len(recipients)} نفر از ثبت‌نام‌کنندگان «{title}»...",
         reply_markup=main_reply_keyboard(True),
@@ -1335,6 +1360,13 @@ async def _decide_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE, ap
         session.close()
 
     result_text = "تایید ✅" if approve else "رد ❌"
+    action = "receipt_approved" if approve else "receipt_rejected"
+    log_admin_activity(
+        query.from_user.id,
+        query.from_user.username,
+        action,
+        f"فیش ثبت‌نام {tracking_code} برای «{event_title}» را {'تایید' if approve else 'رد'} کرد",
+    )
     try:
         if query.message.caption:
             await query.message.edit_caption(caption=f"{query.message.caption}\n\nنتیجه: {result_text}")

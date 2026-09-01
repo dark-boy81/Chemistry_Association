@@ -44,6 +44,7 @@ def admin_menu_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("❓ مدیریت FAQ", callback_data="admin_faq")],
         [InlineKeyboardButton("👥 مدیریت ادمین‌ها", callback_data="admin_manage_admins")],
         [InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("📜 لاگ فعالیت ادمین‌ها", callback_data="admin_activity_log")],
         [InlineKeyboardButton("📊 آمار و گزارش", callback_data="admin_stats")],
         [back_to_main_inline_button()],
     ]

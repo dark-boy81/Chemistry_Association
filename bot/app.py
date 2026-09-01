@@ -62,6 +62,7 @@ from bot.handlers.journal import (
 )
 from bot.handlers.start import start_command
 from bot.handlers.stats import (
+    admin_activity_log_callback,
     admin_stats_export_callback,
     admin_stats_menu_callback,
     admin_stats_pick_event_callback,
@@ -191,6 +192,7 @@ def build_application() -> Application:
     application.add_handler(
         CallbackQueryHandler(admin_stats_export_callback, pattern=r"^admin_stats_export_(?P<event_id>.+)$")
     )
+    application.add_handler(CallbackQueryHandler(admin_activity_log_callback, pattern="^admin_activity_log$"))
 
     # دکمه مشترک «بازگشت به منوی اصلی» در زیرمنوها
     application.add_handler(CallbackQueryHandler(back_to_main_note_callback, pattern="^back_to_main_note$"))

@@ -14,6 +14,7 @@ from telegram.ext import (
 )
 
 from bot.handlers.start import is_admin_telegram_id
+from bot.activity_log import log_admin_activity
 from bot.keyboards import BTN_CANCEL, cancel_reply_keyboard, main_reply_keyboard
 from database.db import get_session
 from database.models import Admin, FAQ
@@ -154,10 +155,18 @@ async def admin_faq_delete_callback(update: Update, context: ContextTypes.DEFAUL
     try:
         faq = session.query(FAQ).filter_by(id=faq_id).first()
         if faq is not None:
+            question_text = faq.question
             session.delete(faq)
             session.commit()
+        else:
+            question_text = None
     finally:
         session.close()
+
+    if question_text is not None:
+        log_admin_activity(
+            query.from_user.id, query.from_user.username, "faq_deleted", f"سوال «{_truncate(question_text)}» را حذف کرد"
+        )
 
     text, keyboard = _faq_list_view()
     await query.edit_message_text("✅ سوال حذف شد.\n\n" + text, reply_markup=keyboard)
@@ -209,6 +218,12 @@ async def admin_faq_receive_answer(update: Update, context: ContextTypes.DEFAULT
         session.close()
 
     context.user_data.pop("new_faq", None)
+    log_admin_activity(
+        update.effective_user.id,
+        update.effective_user.username,
+        "faq_created",
+        f"سوال «{_truncate(data['question'])}» را اضافه کرد",
+    )
     await update.message.reply_text("✅ سوال جدید با موفقیت اضافه شد.", reply_markup=main_reply_keyboard(True))
     return ConversationHandler.END
 
@@ -278,10 +293,21 @@ async def admin_faq_edit_receive_value(update: Update, context: ContextTypes.DEF
         if faq is not None:
             setattr(faq, editing["field"], text)
             session.commit()
+            question_snapshot = faq.question
+        else:
+            question_snapshot = None
     finally:
         session.close()
 
     context.user_data.pop("editing_faq", None)
+    if question_snapshot is not None:
+        field_label = "سوال" if editing["field"] == "question" else "پاسخ"
+        log_admin_activity(
+            update.effective_user.id,
+            update.effective_user.username,
+            "faq_edited",
+            f"{field_label} سوال «{_truncate(question_snapshot)}» را ویرایش کرد",
+        )
     await update.message.reply_text("✅ تغییرات با موفقیت ذخیره شد.", reply_markup=main_reply_keyboard(True))
     return ConversationHandler.END
 

@@ -13,6 +13,7 @@ from telegram.ext import (
 )
 
 from bot.handlers.start import is_admin_telegram_id
+from bot.activity_log import log_admin_activity
 from bot.keyboards import BTN_CANCEL, admin_menu_keyboard, cancel_reply_keyboard, main_reply_keyboard
 from database.db import get_session
 from database.models import (
@@ -168,6 +169,12 @@ async def admin_add_receive_id(update: Update, context: ContextTypes.DEFAULT_TYP
     finally:
         session.close()
 
+    log_admin_activity(
+        update.effective_user.id,
+        update.effective_user.username,
+        "admin_added",
+        f"ادمین جدید با آیدی {new_telegram_id} اضافه کرد",
+    )
     await update.message.reply_text(
         f"✅ ادمین جدید با آیدی {new_telegram_id} اضافه شد.", reply_markup=main_reply_keyboard(True)
     )
@@ -260,6 +267,7 @@ async def admin_remove_confirm_callback(update: Update, context: ContextTypes.DE
     finally:
         session.close()
 
+    log_admin_activity(query.from_user.id, query.from_user.username, "admin_removed", f"{name} را از ادمین‌ها حذف کرد")
     await query.edit_message_text(f"✅ {name} از لیست ادمین‌ها حذف شد.")
     try:
         await context.bot.send_message(chat_id=removed_telegram_id, text="دسترسی مدیریتی شما در ربات لغو شد.")
@@ -316,13 +324,13 @@ async def admin_transfer_pick_callback(update: Update, context: ContextTypes.DEF
 
     keyboard = InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("✅ بله، منتقل کن و کناره‌گیری کن", callback_data=f"admin_transfer_execute_{admin_id}")],
+            [InlineKeyboardButton("✅ بله، ارشدیت را منتقل کن", callback_data=f"admin_transfer_execute_{admin_id}")],
             [InlineKeyboardButton("❌ انصراف", callback_data="admin_manage_admins")],
         ]
     )
     await query.edit_message_text(
-        f"آیا مطمئن هستید می‌خواهید ارشدیت را به {name} منتقل کرده و خودتان به‌طور کامل کناره‌گیری کنید؟"
-        "\n\n⚠️ این عملیات قابل بازگشت نیست مگر اینکه ادمین ارشد جدید دوباره شما را اضافه کند.",
+        f"آیا مطمئن هستید می‌خواهید ارشدیت را به {name} منتقل کنید؟ شما به ادمین عادی تنزل پیدا می‌کنید "
+        "(همچنان ادمین باقی می‌مانید، فقط دیگر دسترسی ارشد نخواهید داشت).",
         reply_markup=keyboard,
     )
 
@@ -344,10 +352,9 @@ async def admin_transfer_execute_callback(update: Update, context: ContextTypes.
             return
 
         target.role = AdminRole.SENIOR
+        requester.role = AdminRole.ADMIN
         target_telegram_id = target.telegram_id
         target_name = _admin_display_name(target)
-        _detach_admin_references(session, requester.id)
-        session.delete(requester)
         session.commit()
     except Exception:
         session.rollback()
@@ -356,11 +363,14 @@ async def admin_transfer_execute_callback(update: Update, context: ContextTypes.
     finally:
         session.close()
 
-    await query.edit_message_text(f"✅ ارشدیت به {target_name} منتقل شد. شما دیگر ادمین نیستید.")
+    log_admin_activity(
+        query.from_user.id, query.from_user.username, "admin_transferred", f"ارشدیت را به {target_name} منتقل کرد"
+    )
+    await query.edit_message_text(f"✅ ارشدیت به {target_name} منتقل شد. شما اکنون ادمین عادی هستید.")
     await context.bot.send_message(
         chat_id=query.from_user.id,
-        text="از همکاری شما سپاسگزاریم 🙏",
-        reply_markup=main_reply_keyboard(False),
+        text="از همکاری شما در دوران ارشدیت سپاسگزاریم 🙏 همچنان به‌عنوان ادمین عادی در دسترسید.",
+        reply_markup=main_reply_keyboard(True),
     )
     try:
         await context.bot.send_message(

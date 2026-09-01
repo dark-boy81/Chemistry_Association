@@ -15,6 +15,7 @@ from bot.handlers.start import is_admin_telegram_id
 from database.db import get_session
 from database.models import (
     Admin,
+    AdminActivityLog,
     Event,
     EventField,
     FAQ,
@@ -185,3 +186,36 @@ async def admin_stats_export_callback(update: Update, context: ContextTypes.DEFA
         filename=f"{title}.xlsx",
         caption=f"📥 لیست ثبت‌نامی‌های «{title}»",
     )
+
+
+async def admin_activity_log_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    if not is_admin_telegram_id(query.from_user.id):
+        await query.edit_message_text("⛔️ شما به این بخش دسترسی ندارید.")
+        return
+
+    session = get_session()
+    try:
+        logs = (
+            session.query(AdminActivityLog)
+            .order_by(AdminActivityLog.created_at.desc())
+            .limit(20)
+            .all()
+        )
+        rows = [(l.admin_username, l.description, l.created_at) for l in logs]
+    finally:
+        session.close()
+
+    if not rows:
+        text = "📜 هنوز فعالیتی ثبت نشده است."
+    else:
+        lines = ["📜 آخرین ۲۰ فعالیت ادمین‌ها:", ""]
+        for username, description, created_at in rows:
+            who = f"@{username}" if username else "ادمین"
+            when = created_at.strftime("%m-%d %H:%M") if created_at else ""
+            lines.append(f"• [{when}] {who}: {description}")
+        text = "\n".join(lines)
+
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ بازگشت", callback_data="admin_menu")]])
+    await query.edit_message_text(text, reply_markup=keyboard)

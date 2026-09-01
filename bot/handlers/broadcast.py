@@ -12,6 +12,7 @@ from telegram.ext import (
     filters,
 )
 
+from bot.activity_log import log_admin_activity
 from bot.handlers.start import is_admin_telegram_id
 from bot.keyboards import BTN_CANCEL, cancel_reply_keyboard, main_reply_keyboard
 from bot.notifications import broadcast_to_all_users
@@ -49,6 +50,12 @@ async def admin_broadcast_receive(update: Update, context: ContextTypes.DEFAULT_
     await update.message.reply_text(f"⏳ در حال ارسال به {count} کاربر...")
     await broadcast_to_all_users(context.bot, f"📢 پیام از طرف ادمین:\n\n{text}")
 
+    log_admin_activity(
+        update.effective_user.id,
+        update.effective_user.username,
+        "broadcast_sent",
+        f"پیام همگانی برای {count} کاربر فرستاد",
+    )
     admin = is_admin_telegram_id(update.effective_user.id)
     await update.message.reply_text("✅ پیام همگانی ارسال شد.", reply_markup=main_reply_keyboard(admin))
     return ConversationHandler.END

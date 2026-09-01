@@ -19,6 +19,7 @@ from telegram.ext import (
 )
 
 from bot.handlers.start import is_admin_telegram_id
+from bot.activity_log import log_admin_activity
 from bot.keyboards import BTN_CANCEL, cancel_reply_keyboard, main_reply_keyboard
 from bot.notifications import broadcast_to_all_users
 from database.db import get_session
@@ -298,10 +299,17 @@ async def admin_journal_edit_receive_value(update: Update, context: ContextTypes
             setattr(issue, field, text)
 
         session.commit()
+        issue_number = issue.issue_number
     finally:
         session.close()
 
     context.user_data.pop("editing_issue", None)
+    log_admin_activity(
+        update.effective_user.id,
+        update.effective_user.username,
+        "journal_edited",
+        f"شماره {issue_number} نشریه را ویرایش کرد (فیلد: {field})",
+    )
     await update.message.reply_text("✅ تغییرات با موفقیت ذخیره شد.", reply_markup=main_reply_keyboard(True))
     return ConversationHandler.END
 
@@ -410,6 +418,12 @@ async def admin_journal_receive_abstract(update: Update, context: ContextTypes.D
         session.close()
 
     context.user_data.pop("new_issue", None)
+    log_admin_activity(
+        update.effective_user.id,
+        update.effective_user.username,
+        "journal_created",
+        f"شماره {data['issue_number']} نشریه («{data['title']}») را اضافه کرد",
+    )
     await update.message.reply_text(
         f"✅ شماره {data['issue_number']} با عنوان «{data['title']}» با موفقیت اضافه شد.",
         reply_markup=main_reply_keyboard(True),

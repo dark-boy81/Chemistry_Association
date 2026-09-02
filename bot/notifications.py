@@ -11,6 +11,7 @@ from telegram.ext import ContextTypes
 
 from database.db import get_session
 from database.models import Event, Registration, RegistrationStatus, UserAccount
+from bot.tz import utc_naive_to_local_str
 
 
 async def broadcast_to_all_users(bot, text: str, reply_markup=None) -> None:
@@ -128,7 +129,7 @@ async def send_event_reminders_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             await context.bot.send_message(
                 chat_id=telegram_id,
-                text=f"⏰ یادآوری: رویداد «{title}» فردا ({event_date.strftime('%Y-%m-%d %H:%M')}) برگزار می‌شود.",
+                text=f"⏰ یادآوری: رویداد «{title}» فردا ({utc_naive_to_local_str(event_date)}) برگزار می‌شود.",
             )
         except Exception:
             pass

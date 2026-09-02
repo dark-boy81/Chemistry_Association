@@ -34,10 +34,11 @@ from telegram.ext import (
     filters,
 )
 
-from bot.handlers.start import is_admin_telegram_id
 from bot.activity_log import log_admin_activity
+from bot.handlers.start import is_admin_telegram_id
 from bot.keyboards import BTN_CANCEL, cancel_reply_keyboard, main_reply_keyboard
 from bot.notifications import broadcast_to_all_users, try_promote_waitlist
+from bot.tz import local_to_utc_naive, utc_naive_to_local_str
 from database.db import get_session
 from database.models import (
     Admin,
@@ -82,7 +83,8 @@ _DATE_PATTERN = re.compile(r"^(\d{3,4})[-/](\d{1,2})[-/](\d{1,2})\s+(\d{1,2}):(\
 def _parse_event_datetime(text: str):
     """هم فرمت میلادی و هم شمسی را می‌فهمد — بر اساس عدد سال تشخیص می‌دهد کدام است
     (سال‌های شمسی فعلی حدود ۱۴۰۰ هستند و میلادی همیشه بالای ۱۵۰۰). اگر فرمت اصلاً
-    قابل‌فهم نباشد None برمی‌گرداند تا خطای واضح به ادمین نشان داده شود (نه سکوت)."""
+    قابل‌فهم نباشد None برمی‌گرداند تا خطای واضح به ادمین نشان داده شود (نه سکوت).
+    عدد وارد‌شده ساعت محلی ایران در نظر گرفته و برای ذخیره به UTC تبدیل می‌شود."""
     match = _DATE_PATTERN.match(text.strip())
     if not match:
         return None
@@ -90,8 +92,10 @@ def _parse_event_datetime(text: str):
     year, month, day, hour, minute = (int(g) for g in match.groups())
     try:
         if year < 1500:
-            return jdatetime.datetime(year, month, day, hour, minute).togregorian()
-        return datetime(year, month, day, hour, minute)
+            local_dt = jdatetime.datetime(year, month, day, hour, minute).togregorian()
+        else:
+            local_dt = datetime(year, month, day, hour, minute)
+        return local_to_utc_naive(local_dt)
     except ValueError:
         return None
 
@@ -204,7 +208,9 @@ def _event_detail_view(event: Event, telegram_id: int):
     lines.append("")
     lines.append(f"💰 هزینه: {'رایگان' if not event.price else f'{int(event.price):,} تومان'}")
     if event.event_date:
-        lines.append(f"🗓 زمان برگزاری: {event.event_date.strftime('%Y-%m-%d %H:%M')}")
+        lines.append(f"🗓 زمان برگزاری: {utc_naive_to_local_str(event.event_date)}")
+    if event.venue:
+        lines.append(f"📍 مکان: {event.venue}")
     if remaining > 0:
         lines.append(f"🪑 ظرفیت باقی‌مانده: {remaining} از {event.capacity}")
     else:
@@ -546,7 +552,7 @@ async def admin_event_detail_callback(update: Update, context: ContextTypes.DEFA
         }
         title, description = event.title, event.description
         capacity, price, card_number = event.capacity, event.price, event.card_number
-        event_date, is_active = event.event_date, event.is_active
+        event_date, is_active, venue = event.event_date, event.is_active, event.venue
     finally:
         session.close()
 
@@ -560,7 +566,9 @@ async def admin_event_detail_callback(update: Update, context: ContextTypes.DEFA
     if card_number:
         lines.append(f"شماره کارت: {card_number}")
     if event_date:
-        lines.append(f"زمان برگزاری: {event_date.strftime('%Y-%m-%d %H:%M')}")
+        lines.append(f"زمان برگزاری: {utc_naive_to_local_str(event_date)}")
+    if venue:
+        lines.append(f"مکان: {venue}")
     lines.append("")
     lines.append("📋 ثبت‌نام‌ها:")
     for status, count in status_counts.items():
@@ -579,6 +587,7 @@ async def admin_event_detail_callback(update: Update, context: ContextTypes.DEFA
             InlineKeyboardButton("✏️ شماره کارت", callback_data=f"admin_event_edit_card_{event_id}"),
             InlineKeyboardButton("✏️ تاریخ", callback_data=f"admin_event_edit_date_{event_id}"),
         ],
+        [InlineKeyboardButton("✏️ مکان برگزاری", callback_data=f"admin_event_edit_venue_{event_id}")],
     ]
     buttons.append(
         [InlineKeyboardButton("📢 پیام به ثبت‌نام‌کنندگان", callback_data=f"admin_event_notify_{event_id}")]
@@ -591,7 +600,7 @@ async def admin_event_detail_callback(update: Update, context: ContextTypes.DEFA
     await query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
 
 
-ADD_TITLE, ADD_DESCRIPTION, ADD_CAPACITY, ADD_PRICE, ADD_CARD_NUMBER, ADD_DATE, ADD_FIELDS = range(7)
+ADD_TITLE, ADD_DESCRIPTION, ADD_CAPACITY, ADD_PRICE, ADD_CARD_NUMBER, ADD_DATE, ADD_VENUE, ADD_FIELDS = range(8)
 
 
 async def admin_event_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -687,6 +696,14 @@ async def admin_event_receive_date(update: Update, context: ContextTypes.DEFAULT
             return ADD_DATE
         context.user_data["new_event"]["event_date"] = parsed
 
+    await update.message.reply_text("مکان برگزاری رویداد را بنویسید (اگر مشخص نیست، - بفرستید):")
+    return ADD_VENUE
+
+
+async def admin_event_receive_venue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip()
+    context.user_data["new_event"]["venue"] = None if text == "-" else text
+
     context.user_data["new_event"]["selected_fields"] = set()
     keyboard = _build_field_selection_keyboard(set())
     await update.message.reply_text(
@@ -736,6 +753,7 @@ async def admin_event_confirm_fields(update: Update, context: ContextTypes.DEFAU
             capacity=data["capacity"],
             price=data.get("price"),
             card_number=data.get("card_number"),
+            venue=data.get("venue"),
             event_date=data.get("event_date"),
             created_by_admin_id=admin_row.id if admin_row else None,
         )
@@ -803,6 +821,7 @@ def build_admin_event_add_conversation() -> ConversationHandler:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_receive_card_number),
             ],
             ADD_DATE: [*cancel_handlers, MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_receive_date)],
+            ADD_VENUE: [*cancel_handlers, MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_receive_venue)],
             ADD_FIELDS: [
                 *cancel_handlers,
                 CallbackQueryHandler(admin_event_toggle_field, pattern=r"^eventfield_toggle_(?P<key>.+)$"),
@@ -827,6 +846,7 @@ EVENT_EDIT_PROMPTS = {
         "• شمسی: 1404-06-29 18:00\n"
         "یا برای حذف تاریخ، - بفرستید."
     ),
+    "venue": "مکان برگزاری جدید را بفرستید (برای حذف، - بفرستید):",
 }
 
 WAITING_EVENT_EDIT_VALUE = 0
@@ -900,6 +920,8 @@ async def admin_event_edit_receive_value(update: Update, context: ContextTypes.D
                     )
                     return WAITING_EVENT_EDIT_VALUE
                 event.event_date = parsed
+        elif field == "venue":
+            event.venue = None if text == "-" else text
 
         session.commit()
         event_title = event.title
@@ -937,7 +959,7 @@ def build_event_edit_conversation() -> ConversationHandler:
         entry_points=[
             CallbackQueryHandler(
                 admin_event_edit_field_start,
-                pattern=r"^admin_event_edit_(?P<field>title|desc|capacity|price|card|date)_(?P<event_id>.+)$",
+                pattern=r"^admin_event_edit_(?P<field>title|desc|capacity|price|card|date|venue)_(?P<event_id>.+)$",
             )
         ],
         states={

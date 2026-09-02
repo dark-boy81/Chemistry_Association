@@ -35,8 +35,9 @@ def back_to_main_inline_button() -> InlineKeyboardButton:
     return InlineKeyboardButton("🏠 بازگشت به منوی اصلی", callback_data="back_to_main_note")
 
 
-def admin_menu_keyboard() -> InlineKeyboardMarkup:
-    """زیرمنوی این‌لاین پنل مدیریت — بعد از زدن دکمه ثابت «🛠 پنل مدیریت» نمایش داده می‌شود."""
+def admin_menu_keyboard(is_senior: bool = False) -> InlineKeyboardMarkup:
+    """زیرمنوی این‌لاین پنل مدیریت — بعد از زدن دکمه ثابت «🛠 پنل مدیریت» نمایش داده می‌شود.
+    «لاگ فعالیت ادمین‌ها» فقط برای ادمین ارشد نمایش داده می‌شود."""
     buttons = [
         [InlineKeyboardButton("📅 مدیریت رویدادها", callback_data="admin_events")],
         [InlineKeyboardButton("🧾 تایید فیش‌های واریزی", callback_data="admin_receipts")],
@@ -44,8 +45,9 @@ def admin_menu_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("❓ مدیریت FAQ", callback_data="admin_faq")],
         [InlineKeyboardButton("👥 مدیریت ادمین‌ها", callback_data="admin_manage_admins")],
         [InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data="admin_broadcast")],
-        [InlineKeyboardButton("📜 لاگ فعالیت ادمین‌ها", callback_data="admin_activity_log")],
-        [InlineKeyboardButton("📊 آمار و گزارش", callback_data="admin_stats")],
-        [back_to_main_inline_button()],
     ]
+    if is_senior:
+        buttons.append([InlineKeyboardButton("📜 لاگ فعالیت ادمین‌ها", callback_data="admin_activity_log")])
+    buttons.append([InlineKeyboardButton("📊 آمار و گزارش", callback_data="admin_stats")])
+    buttons.append([back_to_main_inline_button()])
     return InlineKeyboardMarkup(buttons)

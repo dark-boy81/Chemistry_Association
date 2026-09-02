@@ -111,6 +111,7 @@ class Event(Base):
     capacity = Column(Integer, nullable=False)
     price = Column(Numeric(12, 0), nullable=True)  # مبلغ به تومان؛ برای رویداد رایگان خالی بماند
     card_number = Column(String(64), nullable=True)  # شماره کارت برای واریز وجه رویدادهای غیررایگان
+    venue = Column(String(300), nullable=True)  # مکان برگزاری
     event_date = Column(DateTime, nullable=True)
     is_active = Column(Boolean, default=True)
     reminder_sent = Column(Boolean, default=False)

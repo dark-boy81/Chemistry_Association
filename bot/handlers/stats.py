@@ -10,6 +10,7 @@ from openpyxl.utils import get_column_letter
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from bot.handlers.admins import is_senior_admin
 from bot.handlers.events import STATUS_LABELS
 from bot.handlers.start import is_admin_telegram_id
 from database.db import get_session
@@ -191,8 +192,8 @@ async def admin_stats_export_callback(update: Update, context: ContextTypes.DEFA
 async def admin_activity_log_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    if not is_admin_telegram_id(query.from_user.id):
-        await query.edit_message_text("⛔️ شما به این بخش دسترسی ندارید.")
+    if not is_senior_admin(query.from_user.id):
+        await query.edit_message_text("⛔️ لاگ فعالیت ادمین‌ها فقط برای ادمین ارشد قابل مشاهده است.")
         return
 
     session = get_session()

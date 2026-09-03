@@ -173,6 +173,22 @@ def _generate_tracking_code() -> str:
     return f"REG-{suffix}"
 
 
+def _get_active_participant_telegram_ids(session, event_id: str):
+    """آیدی تلگرام همه ثبت‌نام‌کنندگانی که وضعیت فعال دارند (در انتظار/تاییدشده/
+    لیست انتظار) را برمی‌گرداند — برای اطلاع‌رسانی تغییرات مهم رویداد."""
+    regs = (
+        session.query(Registration)
+        .filter(Registration.event_id == event_id, Registration.status.in_(ACTIVE_STATUSES))
+        .all()
+    )
+    ids = []
+    for reg in regs:
+        user = session.query(UserAccount).filter_by(id=reg.user_id).first()
+        if user:
+            ids.append(user.telegram_id)
+    return ids
+
+
 # --- منوی کاربر: لیست و جزئیات رویداد ---
 
 
@@ -760,17 +776,22 @@ async def admin_event_confirm_fields(update: Update, context: ContextTypes.DEFAU
         session.add(event)
         session.flush()
 
-        for order, key in enumerate(data.get("selected_fields", [])):
+        selected = data.get("selected_fields", set())
+        order = 0
+        for key, label, ftype in FIELD_CATALOG:
+            if key not in selected:
+                continue
             session.add(
                 EventField(
                     event_id=event.id,
                     field_key=key,
-                    field_label=FIELD_LABELS[key],
-                    field_type=FIELD_TYPES[key],
+                    field_label=label,
+                    field_type=ftype,
                     is_required=True,
                     display_order=order,
                 )
             )
+            order += 1
         session.commit()
         title = event.title
     finally:
@@ -925,6 +946,17 @@ async def admin_event_edit_receive_value(update: Update, context: ContextTypes.D
 
         session.commit()
         event_title = event.title
+
+        notify_recipients = []
+        notify_text = None
+        if field == "date":
+            notify_recipients = _get_active_participant_telegram_ids(session, event_id)
+            new_value = utc_naive_to_local_str(event.event_date) if event.event_date else "نامشخص"
+            notify_text = f"🗓 زمان برگزاری رویداد «{event_title}» تغییر کرد.\nزمان جدید: {new_value}"
+        elif field == "venue":
+            notify_recipients = _get_active_participant_telegram_ids(session, event_id)
+            new_value = event.venue if event.venue else "نامشخص"
+            notify_text = f"📍 مکان برگزاری رویداد «{event_title}» تغییر کرد.\nمکان جدید: {new_value}"
     finally:
         session.close()
 
@@ -936,6 +968,14 @@ async def admin_event_edit_receive_value(update: Update, context: ContextTypes.D
         f"رویداد «{event_title}» را ویرایش کرد (فیلد: {field})",
     )
     await update.message.reply_text("✅ تغییرات ذخیره شد.", reply_markup=main_reply_keyboard(True))
+
+    if notify_recipients and notify_text:
+        for telegram_id in notify_recipients:
+            try:
+                await context.bot.send_message(chat_id=telegram_id, text=f"⚠️ {notify_text}")
+            except Exception:
+                pass
+            await asyncio.sleep(0.05)
 
     if capacity_increased:
         await try_promote_waitlist(context.bot, event_id)

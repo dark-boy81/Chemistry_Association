@@ -667,7 +667,7 @@ async def admin_event_receive_price(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text(
             "تاریخ و ساعت برگزاری را بفرستید:\n"
             "• میلادی: 2026-09-20 18:00\n"
-            "• شمسی: 1404-06-29 18:00\n"
+            "• شمسی: 1405-06-29 18:00\n"
             "یا برای رد کردن این مرحله، - بفرستید."
         )
         return ADD_DATE
@@ -690,7 +690,7 @@ async def admin_event_receive_card_number(update: Update, context: ContextTypes.
     await update.message.reply_text(
         "تاریخ و ساعت برگزاری را بفرستید:\n"
         "• میلادی: 2026-09-20 18:00\n"
-        "• شمسی: 1404-06-29 18:00\n"
+        "• شمسی: 1405-06-29 18:00\n"
         "یا برای رد کردن این مرحله، - بفرستید."
     )
     return ADD_DATE
@@ -706,7 +706,7 @@ async def admin_event_receive_date(update: Update, context: ContextTypes.DEFAULT
             await update.message.reply_text(
                 "متوجه این فرمت تاریخ نشدم. لطفاً به یکی از این شکل‌ها بفرستید:\n"
                 "• میلادی: 2026-09-20 18:00\n"
-                "• شمسی: 1404-06-29 18:00\n"
+                "• شمسی: 1405-06-29 18:00\n"
                 "یا برای رد کردن این مرحله (بدون یادآوری خودکار)، - بفرستید."
             )
             return ADD_DATE
@@ -864,7 +864,7 @@ EVENT_EDIT_PROMPTS = {
     "date": (
         "تاریخ و ساعت جدید را بفرستید:\n"
         "• میلادی: 2026-09-20 18:00\n"
-        "• شمسی: 1404-06-29 18:00\n"
+        "• شمسی: 1405-06-29 18:00\n"
         "یا برای حذف تاریخ، - بفرستید."
     ),
     "venue": "مکان برگزاری جدید را بفرستید (برای حذف، - بفرستید):",
@@ -937,7 +937,7 @@ async def admin_event_edit_receive_value(update: Update, context: ContextTypes.D
                 parsed = _parse_event_datetime(text)
                 if parsed is None:
                     await update.message.reply_text(
-                        "متوجه این فرمت تاریخ نشدم. مثال میلادی: 2026-09-20 18:00 — مثال شمسی: 1404-06-29 18:00"
+                        "متوجه این فرمت تاریخ نشدم. مثال میلادی: 2026-09-20 18:00 — مثال شمسی: 1405-06-29 18:00"
                     )
                     return WAITING_EVENT_EDIT_VALUE
                 event.event_date = parsed

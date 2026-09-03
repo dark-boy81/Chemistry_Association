@@ -452,6 +452,9 @@ async def _finalize_registration(update: Update, context: ContextTypes.DEFAULT_T
         final_status = registration.status
         registration_id = registration.id
         event_title = event.title
+        event_capacity = event.capacity
+        taken_before = taken
+        user_label = user.full_name or (f"@{user.username}" if user.username else str(user.telegram_id))
         admin_ids = [a.telegram_id for a in session.query(Admin).all()]
     finally:
         session.close()
@@ -474,6 +477,36 @@ async def _finalize_registration(update: Update, context: ContextTypes.DEFAULT_T
                     chat_id=admin_telegram_id,
                     text=f"🧾 فیش جدیدی در انتظار بررسی است.\n\nرویداد: {event_title}\nکد پیگیری: {tracking_code}",
                     reply_markup=notify_keyboard,
+                )
+            except Exception:
+                pass
+
+    elif final_status == RegistrationStatus.APPROVED:
+        # ثبت‌نام رایگان و خودکار تایید‌شده — نیازی به اقدام ادمین نیست، فقط اطلاع‌رسانی
+        for admin_telegram_id in admin_ids:
+            try:
+                await context.bot.send_message(
+                    chat_id=admin_telegram_id,
+                    text=f"✅ ثبت‌نام رایگان جدید در «{event_title}»\nکاربر: {user_label}\nکد پیگیری: {tracking_code}",
+                )
+            except Exception:
+                pass
+        if taken_before + 1 >= event_capacity:
+            for admin_telegram_id in admin_ids:
+                try:
+                    await context.bot.send_message(
+                        chat_id=admin_telegram_id, text=f"🎉 رویداد «{event_title}» به ظرفیت کامل رسید."
+                    )
+                except Exception:
+                    pass
+
+    elif final_status == RegistrationStatus.WAITLISTED:
+        for admin_telegram_id in admin_ids:
+            try:
+                await context.bot.send_message(
+                    chat_id=admin_telegram_id,
+                    text=f"🕒 ثبت‌نام جدید در لیست انتظار «{event_title}» (ظرفیت پر است)\n"
+                    f"کاربر: {user_label}\nکد پیگیری: {tracking_code}",
                 )
             except Exception:
                 pass
@@ -1418,6 +1451,21 @@ async def _decide_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE, ap
         user_telegram_id = user.telegram_id if user else None
         event_title = event.title if event else ""
         event_id = registration.event_id
+
+        just_became_full = False
+        admin_ids_for_full = []
+        if approve and event is not None:
+            taken_now = (
+                session.query(Registration)
+                .filter(
+                    Registration.event_id == event.id,
+                    Registration.status.in_([RegistrationStatus.PENDING, RegistrationStatus.APPROVED]),
+                )
+                .count()
+            )
+            just_became_full = taken_now >= event.capacity
+            if just_became_full:
+                admin_ids_for_full = [a.telegram_id for a in session.query(Admin).all()]
     finally:
         session.close()
 
@@ -1447,6 +1495,14 @@ async def _decide_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE, ap
 
     if not approve:
         await try_promote_waitlist(context.bot, event_id)
+    elif just_became_full:
+        for admin_telegram_id in admin_ids_for_full:
+            try:
+                await context.bot.send_message(
+                    chat_id=admin_telegram_id, text=f"🎉 رویداد «{event_title}» به ظرفیت کامل رسید."
+                )
+            except Exception:
+                pass
 
 
 async def admin_receipt_approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

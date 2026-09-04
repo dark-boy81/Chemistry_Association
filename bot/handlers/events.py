@@ -298,6 +298,102 @@ async def event_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await try_promote_waitlist(context.bot, event_id)
 
 
+# --- «فعالیت‌های من»: لیست و جزئیات ثبت‌نام‌های خود کاربر ---
+
+
+def _truncate_label(text: str, length: int = 50) -> str:
+    return text if len(text) <= length else text[: length - 1] + "…"
+
+
+def _my_activities_view(telegram_id: int):
+    session = get_session()
+    try:
+        user = session.query(UserAccount).filter_by(telegram_id=telegram_id).first()
+        if user is None:
+            return "🗂 شما هنوز در هیچ رویدادی ثبت‌نام نکرده‌اید.", None
+
+        regs = (
+            session.query(Registration)
+            .filter_by(user_id=user.id)
+            .order_by(Registration.submitted_at.desc())
+            .all()
+        )
+        if not regs:
+            return "🗂 شما هنوز در هیچ رویدادی ثبت‌نام نکرده‌اید.", None
+
+        buttons = []
+        for reg in regs:
+            event = session.query(Event).filter_by(id=reg.event_id).first()
+            title = event.title if event else "رویداد حذف‌شده"
+            label = _truncate_label(f"{title} — {STATUS_LABELS.get(reg.status, reg.status)}")
+            buttons.append([InlineKeyboardButton(label, callback_data=f"my_activity_view_{reg.id}")])
+        return "🗂 فعالیت‌های شما — روی هرکدام بزنید تا جزئیات را ببینید:", InlineKeyboardMarkup(buttons)
+    finally:
+        session.close()
+
+
+async def my_activities_text_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text, keyboard = _my_activities_view(update.effective_user.id)
+    await update.message.reply_text(text, reply_markup=keyboard)
+
+
+async def my_activities_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    text, keyboard = _my_activities_view(query.from_user.id)
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+
+async def my_activity_view_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    registration_id = context.match.group("registration_id")
+    session = get_session()
+    try:
+        registration = session.query(Registration).filter_by(id=registration_id).first()
+        if registration is None:
+            await query.edit_message_text("این ثبت‌نام یافت نشد.")
+            return
+
+        # امنیت: مطمئن شویم این ثبت‌نام واقعاً متعلق به همین کاربر است
+        requester = session.query(UserAccount).filter_by(telegram_id=query.from_user.id).first()
+        if requester is None or registration.user_id != requester.id:
+            await query.edit_message_text("⛔️ به این ثبت‌نام دسترسی ندارید.")
+            return
+
+        event = session.query(Event).filter_by(id=registration.event_id).first()
+        field_values = (
+            session.query(RegistrationFieldValue).filter_by(registration_id=registration.id).all()
+        )
+        answer_lines = []
+        for fv in field_values:
+            ef = session.query(EventField).filter_by(id=fv.event_field_id).first()
+            label = ef.field_label if ef else "؟"
+            answer_lines.append(f"• {label}: {fv.value}")
+
+        lines = [f"📅 {event.title if event else 'رویداد حذف‌شده'}"]
+        lines.append(f"وضعیت: {STATUS_LABELS.get(registration.status, registration.status)}")
+        lines.append(f"کد پیگیری: {registration.tracking_code}")
+        if registration.submitted_at:
+            lines.append(f"تاریخ ثبت‌نام: {utc_naive_to_local_str(registration.submitted_at)}")
+        if answer_lines:
+            lines.append("")
+            lines.append("اطلاعات ثبت‌شده:")
+            lines.extend(answer_lines)
+
+        can_cancel = registration.status in ACTIVE_STATUSES
+    finally:
+        session.close()
+
+    buttons = []
+    if can_cancel:
+        buttons.append([InlineKeyboardButton("❌ لغو ثبت‌نام", callback_data=f"event_cancel_{registration_id}")])
+    buttons.append([InlineKeyboardButton("⬅️ بازگشت به فعالیت‌های من", callback_data="my_activities_list")])
+
+    await query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
+
+
 # --- گفتگوی ثبت‌نام در رویداد ---
 
 REG_COLLECTING, REG_RECEIPT = range(2)

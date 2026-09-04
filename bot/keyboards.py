@@ -10,6 +10,7 @@ BTN_JOURNAL = "📚 نشریه پژواک شیمی"
 BTN_EVENTS = "📅 رویدادها"
 BTN_FAQ = "❓ سوالات متداول"
 BTN_CONTACT = "✉️ ارتباط با ادمین"
+BTN_MY_ACTIVITIES = "🗂 فعالیت‌های من"
 BTN_ADMIN_PANEL = "🛠 پنل مدیریت"
 BTN_CANCEL = "❌ انصراف"
 
@@ -19,6 +20,7 @@ def main_reply_keyboard(is_admin: bool) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(BTN_JOURNAL), KeyboardButton(BTN_EVENTS)],
         [KeyboardButton(BTN_FAQ), KeyboardButton(BTN_CONTACT)],
+        [KeyboardButton(BTN_MY_ACTIVITIES)],
     ]
     if is_admin:
         rows.append([KeyboardButton(BTN_ADMIN_PANEL)])

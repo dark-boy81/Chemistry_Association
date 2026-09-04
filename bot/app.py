@@ -36,6 +36,9 @@ from bot.handlers.events import (
     event_list_callback,
     event_view_callback,
     events_menu_text_entry,
+    my_activities_list_callback,
+    my_activities_text_entry,
+    my_activity_view_callback,
 )
 from bot.handlers.faq import (
     admin_faq_delete_callback,
@@ -68,7 +71,7 @@ from bot.handlers.stats import (
     admin_stats_pick_event_callback,
 )
 from bot.handlers.user_menu import back_to_main_note_callback
-from bot.keyboards import BTN_ADMIN_PANEL, BTN_CONTACT, BTN_EVENTS, BTN_FAQ, BTN_JOURNAL
+from bot.keyboards import BTN_ADMIN_PANEL, BTN_CONTACT, BTN_EVENTS, BTN_FAQ, BTN_JOURNAL, BTN_MY_ACTIVITIES
 from bot.notifications import send_event_reminders_job
 from config import BOT_TOKEN
 
@@ -97,6 +100,7 @@ def build_application() -> Application:
     application.add_handler(MessageHandler(filters.Text([BTN_JOURNAL]), journal_menu_text_entry))
     application.add_handler(MessageHandler(filters.Text([BTN_EVENTS]), events_menu_text_entry))
     application.add_handler(MessageHandler(filters.Text([BTN_FAQ]), faq_menu_text_entry))
+    application.add_handler(MessageHandler(filters.Text([BTN_MY_ACTIVITIES]), my_activities_text_entry))
     application.add_handler(MessageHandler(filters.Text([BTN_ADMIN_PANEL]), admin_menu_text_entry))
     # توجه: دکمه BTN_CONTACT به‌عنوان entry point گفتگوی contact ثبت شده (بالاتر)
 
@@ -115,6 +119,12 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(event_view_callback, pattern=r"^event_view_(?P<event_id>.+)$"))
     application.add_handler(
         CallbackQueryHandler(event_cancel_callback, pattern=r"^event_cancel_(?P<registration_id>.+)$")
+    )
+
+    # دکمه‌های این‌لاین «فعالیت‌های من» (کاربر)
+    application.add_handler(CallbackQueryHandler(my_activities_list_callback, pattern="^my_activities_list$"))
+    application.add_handler(
+        CallbackQueryHandler(my_activity_view_callback, pattern=r"^my_activity_view_(?P<registration_id>.+)$")
     )
 
     # دکمه‌های این‌لاین بخش FAQ (کاربر)

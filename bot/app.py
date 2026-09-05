@@ -39,6 +39,7 @@ from bot.handlers.events import (
     my_activities_list_callback,
     my_activities_text_entry,
     my_activity_view_callback,
+    offer_receipt_received,
 )
 from bot.handlers.faq import (
     admin_faq_delete_callback,
@@ -72,7 +73,7 @@ from bot.handlers.stats import (
 )
 from bot.handlers.user_menu import back_to_main_note_callback
 from bot.keyboards import BTN_ADMIN_PANEL, BTN_CONTACT, BTN_EVENTS, BTN_FAQ, BTN_JOURNAL, BTN_MY_ACTIVITIES
-from bot.notifications import send_event_reminders_job
+from bot.notifications import check_expired_offers_job, send_event_reminders_job
 from config import BOT_TOKEN
 
 
@@ -103,6 +104,11 @@ def build_application() -> Application:
     application.add_handler(MessageHandler(filters.Text([BTN_MY_ACTIVITIES]), my_activities_text_entry))
     application.add_handler(MessageHandler(filters.Text([BTN_ADMIN_PANEL]), admin_menu_text_entry))
     # توجه: دکمه BTN_CONTACT به‌عنوان entry point گفتگوی contact ثبت شده (بالاتر)
+
+    # دریافت فیش برای پیشنهاد نوبت از لیست انتظار — خارج از هر گفتگو، فقط وقتی کاربر
+    # پیشنهاد فعال (OFFERED) داشته باشد اثر می‌کند؛ چون بعد از همه ConversationHandler ها
+    # ثبت شده، تداخلی با state مربوط به REG_RECEIPT گفتگوی ثبت‌نام ندارد.
+    application.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, offer_receipt_received))
 
     # دکمه‌های این‌لاین بخش نشریه (کاربر)
     application.add_handler(CallbackQueryHandler(journal_latest_callback, pattern="^journal_latest$"))
@@ -209,5 +215,8 @@ def build_application() -> Application:
 
     # Job زمان‌بندی‌شده: هر ۳۰ دقیقه بررسی رویدادهای نزدیک برای ارسال یادآوری خودکار
     application.job_queue.run_repeating(send_event_reminders_job, interval=1800, first=15)
+
+    # Job زمان‌بندی‌شده: هر ۱۰ دقیقه بررسی پیشنهادهای پرداخت منقضی‌شده لیست انتظار
+    application.job_queue.run_repeating(check_expired_offers_job, interval=600, first=30)
 
     return application

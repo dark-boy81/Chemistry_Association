@@ -30,11 +30,18 @@ def init_db() -> None:
 def _apply_lightweight_migrations() -> None:
     """اجرای امن و idempotent — هر بار در startup اجرا می‌شود، فقط اگر ستون از قبل
     نباشد آن را اضافه می‌کند. جایگزین ساده‌ای برای Alembic تا وقتی پروژه به آن نیاز پیدا کند."""
+    # افزودن مقدار جدید به یک ENUM موجود در پستگرس باید در تراکنش جداگانه (autocommit)
+    # اجرا شود، نه در همان تراکنش دستورات دیگر
+    with engine.connect() as conn:
+        conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+        conn.execute(text("ALTER TYPE registrationstatus ADD VALUE IF NOT EXISTS 'offered'"))
+
     statements = [
         "ALTER TABLE events ADD COLUMN IF NOT EXISTS reminder_sent BOOLEAN DEFAULT FALSE",
         "ALTER TABLE events ADD COLUMN IF NOT EXISTS card_number VARCHAR(64)",
         "ALTER TABLE events ADD COLUMN IF NOT EXISTS venue VARCHAR(300)",
         "ALTER TABLE registrations DROP CONSTRAINT IF EXISTS uq_event_user",
+        "ALTER TABLE registrations ADD COLUMN IF NOT EXISTS offer_expires_at TIMESTAMP",
     ]
     with engine.begin() as conn:
         for statement in statements:

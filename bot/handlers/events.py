@@ -70,11 +70,23 @@ STATUS_LABELS = {
     RegistrationStatus.APPROVED: "✅ تایید شده",
     RegistrationStatus.REJECTED: "❌ رد شده",
     RegistrationStatus.WAITLISTED: "🕒 در لیست انتظار",
+    RegistrationStatus.OFFERED: "💳 نوبت شما رسیده — در انتظار پرداخت",
     RegistrationStatus.CANCELLED: "🚫 لغو شده",
 }
 
 # وضعیت‌هایی که یعنی کاربر "همین الان" یک ثبت‌نام فعال دارد و نباید دوباره ثبت‌نام کند
-ACTIVE_STATUSES = (RegistrationStatus.PENDING, RegistrationStatus.APPROVED, RegistrationStatus.WAITLISTED)
+ACTIVE_STATUSES = (
+    RegistrationStatus.PENDING,
+    RegistrationStatus.APPROVED,
+    RegistrationStatus.WAITLISTED,
+    RegistrationStatus.OFFERED,
+)
+
+# وضعیت‌هایی که یک جای رویداد را اشغال کرده‌اند (برای محاسبه ظرفیت باقی‌مانده)
+RESERVED_STATUSES = (RegistrationStatus.PENDING, RegistrationStatus.APPROVED, RegistrationStatus.OFFERED)
+
+# مهلت پرداخت وقتی نوبت کسی از لیست انتظار می‌رسد
+WAITLIST_OFFER_HOURS = 1
 
 # فرمت تاریخ ورودی: هم میلادی هم شمسی، با - یا / بین اجزا
 _DATE_PATTERN = re.compile(r"^(\d{3,4})[-/](\d{1,2})[-/](\d{1,2})\s+(\d{1,2}):(\d{2})$")
@@ -142,7 +154,7 @@ def count_taken_spots(event_id: str) -> int:
             session.query(Registration)
             .filter(
                 Registration.event_id == event_id,
-                Registration.status.in_([RegistrationStatus.PENDING, RegistrationStatus.APPROVED]),
+                Registration.status.in_(RESERVED_STATUSES),
             )
             .count()
         )
@@ -245,6 +257,8 @@ def _event_detail_view(event: Event, telegram_id: int):
         lines.append("")
         lines.append(f"وضعیت ثبت‌نام شما: {STATUS_LABELS.get(existing.status, existing.status)}")
         lines.append(f"کد پیگیری: {existing.tracking_code}")
+        if existing.status == RegistrationStatus.OFFERED and existing.offer_expires_at:
+            lines.append(f"⏰ مهلت ارسال فیش تا: {utc_naive_to_local_str(existing.offer_expires_at)}")
         if existing.status in ACTIVE_STATUSES:
             buttons.append([InlineKeyboardButton("❌ لغو ثبت‌نام", callback_data=f"event_cancel_{existing.id}")])
 
@@ -296,6 +310,71 @@ async def event_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TY
     )
     await query.edit_message_text(note + text, reply_markup=keyboard)
     await try_promote_waitlist(context.bot, event_id)
+
+
+# --- دریافت فیش برای «پیشنهاد نوبت از لیست انتظار» (خارج از گفتگوی ثبت‌نام اصلی،
+# چون این پیشنهاد در پس‌زمینه و بدون شروع گفتگوی جدید برای کاربر ارسال می‌شود) ---
+
+
+async def offer_receipt_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    file_id = None
+    if update.message.photo:
+        file_id = update.message.photo[-1].file_id
+    elif update.message.document:
+        file_id = update.message.document.file_id
+    if file_id is None:
+        return
+
+    tg_user = update.effective_user
+    session = get_session()
+    try:
+        user = session.query(UserAccount).filter_by(telegram_id=tg_user.id).first()
+        if user is None:
+            return
+
+        offer = (
+            session.query(Registration)
+            .filter_by(user_id=user.id, status=RegistrationStatus.OFFERED)
+            .order_by(Registration.offer_expires_at.desc())
+            .first()
+        )
+        if offer is None:
+            return
+        if offer.offer_expires_at and offer.offer_expires_at < datetime.utcnow():
+            # مهلتش گذشته؛ Job جداگانه به‌زودی این را لغو و نوبت را به نفر بعدی می‌دهد
+            return
+
+        offer.status = RegistrationStatus.PENDING
+        offer.receipt_file_url = file_id
+        offer.offer_expires_at = None
+
+        event = session.query(Event).filter_by(id=offer.event_id).first()
+        event_title = event.title if event else ""
+        tracking_code = offer.tracking_code
+        registration_id = offer.id
+        admin_ids = [a.telegram_id for a in session.query(Admin).all()]
+        session.commit()
+    finally:
+        session.close()
+
+    await update.message.reply_text(
+        f"✅ فیش شما دریافت شد و در انتظار بررسی ادمین است.\nکد پیگیری: {tracking_code}",
+        reply_markup=main_reply_keyboard(is_admin_telegram_id(tg_user.id)),
+    )
+
+    notify_keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🧾 بررسی فیش", callback_data=f"admin_receipt_view_{registration_id}")]]
+    )
+    for admin_telegram_id in admin_ids:
+        try:
+            await context.bot.send_message(
+                chat_id=admin_telegram_id,
+                text=f"🧾 فیش جدیدی در انتظار بررسی است (از لیست انتظار).\n\n"
+                f"رویداد: {event_title}\nکد پیگیری: {tracking_code}",
+                reply_markup=notify_keyboard,
+            )
+        except Exception:
+            pass
 
 
 # --- «فعالیت‌های من»: لیست و جزئیات ثبت‌نام‌های خود کاربر ---
@@ -422,6 +501,7 @@ async def event_register_start(update: Update, context: ContextTypes.DEFAULT_TYP
         "requires_payment": bool(event.price),
         "card_number": event.card_number,
         "price": event.price,
+        "capacity": event.capacity,
     }
 
     await query.edit_message_text(f"📝 در حال ثبت‌نام برای «{event.title}»...")
@@ -442,6 +522,18 @@ async def event_register_start(update: Update, context: ContextTypes.DEFAULT_TYP
 async def _proceed_after_fields(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     reg = context.user_data["reg"]
     chat_id = update.effective_user.id
+
+    taken = count_taken_spots(reg["event_id"])
+    if taken >= reg["capacity"]:
+        # ظرفیت پره — مستقیم می‌ره لیست انتظار، بدون درخواست فیش (وقتی نوبتش شد،
+        # اطلاعات پرداخت جداگانه برایش ارسال می‌شود)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="🕒 ظرفیت این رویداد تکمیل است؛ ثبت‌نام شما در لیست انتظار قرار می‌گیرد. "
+            "اگر جایی خالی شد، اطلاعات پرداخت (در صورت نیاز) برایتان ارسال خواهد شد.",
+        )
+        return await _finalize_registration(update, context, receipt_file_id=None)
+
     if reg["requires_payment"]:
         price_text = f"{int(reg['price']):,} تومان" if reg.get("price") else ""
         card = reg.get("card_number")
@@ -515,7 +607,7 @@ async def _finalize_registration(update: Update, context: ContextTypes.DEFAULT_T
             session.query(Registration)
             .filter(
                 Registration.event_id == event.id,
-                Registration.status.in_([RegistrationStatus.PENDING, RegistrationStatus.APPROVED]),
+                Registration.status.in_(RESERVED_STATUSES),
             )
             .count()
         )
@@ -1555,7 +1647,7 @@ async def _decide_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE, ap
                 session.query(Registration)
                 .filter(
                     Registration.event_id == event.id,
-                    Registration.status.in_([RegistrationStatus.PENDING, RegistrationStatus.APPROVED]),
+                    Registration.status.in_(RESERVED_STATUSES),
                 )
                 .count()
             )

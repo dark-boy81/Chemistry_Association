@@ -49,6 +49,7 @@ class RegistrationStatus(str, enum.Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
     WAITLISTED = "waitlisted"
+    OFFERED = "offered"  # جای خالی به این نفر پیشنهاد شده؛ منتظر ارسال فیش تا مهلت مشخص
     CANCELLED = "cancelled"
 
 
@@ -151,6 +152,7 @@ class Registration(Base):
     submitted_at = Column(DateTime, default=datetime.utcnow)
     reviewed_at = Column(DateTime, nullable=True)
     reviewed_by_admin_id = Column(UUID(as_uuid=False), ForeignKey("admins.id", ondelete="SET NULL"), nullable=True)
+    offer_expires_at = Column(DateTime, nullable=True)  # مهلت پرداخت وقتی وضعیت OFFERED است
 
     event = relationship("Event", back_populates="registrations")
     user = relationship("UserAccount", back_populates="registrations")

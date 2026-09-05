@@ -31,10 +31,13 @@ def _apply_lightweight_migrations() -> None:
     """اجرای امن و idempotent — هر بار در startup اجرا می‌شود، فقط اگر ستون از قبل
     نباشد آن را اضافه می‌کند. جایگزین ساده‌ای برای Alembic تا وقتی پروژه به آن نیاز پیدا کند."""
     # افزودن مقدار جدید به یک ENUM موجود در پستگرس باید در تراکنش جداگانه (autocommit)
-    # اجرا شود، نه در همان تراکنش دستورات دیگر
+    # اجرا شود، نه در همان تراکنش دستورات دیگر.
+    # ⚠️ نکته مهم: SQLAlchemy برای Enum(RegistrationStatus) به‌صورت پیش‌فرض از نام عضو
+    # پایتونی (مثل PENDING) به‌عنوان مقدار ذخیره‌شده در پستگرس استفاده می‌کند، نه مقدار
+    # رشته‌ای‌اش (مثل "pending") — پس مقدار جدید enum باید حروف بزرگ باشد.
     with engine.connect() as conn:
         conn = conn.execution_options(isolation_level="AUTOCOMMIT")
-        conn.execute(text("ALTER TYPE registrationstatus ADD VALUE IF NOT EXISTS 'offered'"))
+        conn.execute(text("ALTER TYPE registrationstatus ADD VALUE IF NOT EXISTS 'OFFERED'"))
 
     statements = [
         "ALTER TABLE events ADD COLUMN IF NOT EXISTS reminder_sent BOOLEAN DEFAULT FALSE",

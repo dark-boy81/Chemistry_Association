@@ -22,6 +22,10 @@ from bot.handlers.events import (
     admin_event_delete_prompt_callback,
     admin_event_detail_callback,
     admin_event_list_callback,
+    admin_event_registrant_delete_confirm_callback,
+    admin_event_registrant_delete_prompt_callback,
+    admin_event_registrant_view_callback,
+    admin_event_registrants_callback,
     admin_events_menu_callback,
     admin_receipt_approve_callback,
     admin_receipt_reject_callback,
@@ -158,6 +162,26 @@ def build_application() -> Application:
     )
     application.add_handler(
         CallbackQueryHandler(admin_event_delete_confirm_callback, pattern=r"^admin_event_delyes_(?P<event_id>.+)$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(admin_event_registrants_callback, pattern=r"^admin_event_regs_(?P<event_id>.+)$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            admin_event_registrant_view_callback, pattern=r"^admin_event_reg_view_(?P<registration_id>.+)$"
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            admin_event_registrant_delete_prompt_callback,
+            pattern=r"^admin_event_reg_delask_(?P<registration_id>.+)$",
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            admin_event_registrant_delete_confirm_callback,
+            pattern=r"^admin_event_reg_delyes_(?P<registration_id>.+)$",
+        )
     )
 
     # تایید/رد فیش‌های واریزی

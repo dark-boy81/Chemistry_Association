@@ -827,6 +827,9 @@ async def admin_event_detail_callback(update: Update, context: ContextTypes.DEFA
         [InlineKeyboardButton("✏️ مکان برگزاری", callback_data=f"admin_event_edit_venue_{event_id}")],
     ]
     buttons.append(
+        [InlineKeyboardButton("👥 لیست ثبت‌نام‌کنندگان", callback_data=f"admin_event_regs_{event_id}")]
+    )
+    buttons.append(
         [InlineKeyboardButton("📢 پیام به ثبت‌نام‌کنندگان", callback_data=f"admin_event_notify_{event_id}")]
     )
     if is_active:
@@ -835,6 +838,190 @@ async def admin_event_detail_callback(update: Update, context: ContextTypes.DEFA
     buttons.append([InlineKeyboardButton("⬅️ بازگشت به لیست", callback_data="admin_event_list")])
 
     await query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
+
+
+# --- لیست ثبت‌نام‌کنندگان یک رویداد و حذف دستی توسط ادمین (مثلاً برای ثبت‌نام اسپم) ---
+
+
+async def admin_event_registrants_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    if not is_admin_telegram_id(query.from_user.id):
+        await query.edit_message_text("⛔️ شما به این بخش دسترسی ندارید.")
+        return
+
+    event_id = context.match.group("event_id")
+    session = get_session()
+    try:
+        event = session.query(Event).filter_by(id=event_id).first()
+        if event is None:
+            await query.edit_message_text("این رویداد یافت نشد.")
+            return
+
+        regs = (
+            session.query(Registration)
+            .filter(Registration.event_id == event_id, Registration.status.in_(ACTIVE_STATUSES))
+            .order_by(Registration.submitted_at.asc())
+            .all()
+        )
+        rows = []
+        for reg in regs:
+            user = session.query(UserAccount).filter_by(id=reg.user_id).first()
+            if user:
+                who = user.full_name or (f"@{user.username}" if user.username else str(user.telegram_id))
+            else:
+                who = "؟"
+            rows.append((reg.id, f"{who} — {STATUS_LABELS.get(reg.status, reg.status)}"))
+        title = event.title
+    finally:
+        session.close()
+
+    back_button = InlineKeyboardButton("⬅️ بازگشت", callback_data=f"admin_event_detail_{event_id}")
+    if not rows:
+        await query.edit_message_text(
+            f"👥 هیچ ثبت‌نام فعالی برای «{title}» وجود ندارد.", reply_markup=InlineKeyboardMarkup([[back_button]])
+        )
+        return
+
+    buttons = [
+        [InlineKeyboardButton(_truncate_label(label), callback_data=f"admin_event_reg_view_{rid}")]
+        for rid, label in rows
+    ]
+    buttons.append([back_button])
+    await query.edit_message_text(f"👥 ثبت‌نام‌کنندگان «{title}»:", reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def admin_event_registrant_view_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    if not is_admin_telegram_id(query.from_user.id):
+        await query.edit_message_text("⛔️ شما به این بخش دسترسی ندارید.")
+        return
+
+    registration_id = context.match.group("registration_id")
+    session = get_session()
+    try:
+        reg = session.query(Registration).filter_by(id=registration_id).first()
+        if reg is None:
+            await query.edit_message_text("این ثبت‌نام یافت نشد.")
+            return
+
+        user = session.query(UserAccount).filter_by(id=reg.user_id).first()
+        field_values = session.query(RegistrationFieldValue).filter_by(registration_id=reg.id).all()
+        answer_lines = []
+        for fv in field_values:
+            ef = session.query(EventField).filter_by(id=fv.event_field_id).first()
+            label = ef.field_label if ef else "؟"
+            answer_lines.append(f"• {label}: {fv.value}")
+
+        who = "؟"
+        if user:
+            who = user.full_name or (f"@{user.username}" if user.username else str(user.telegram_id))
+        lines = [f"👤 {who}"]
+        lines.append(f"وضعیت: {STATUS_LABELS.get(reg.status, reg.status)}")
+        lines.append(f"کد پیگیری: {reg.tracking_code}")
+        if reg.submitted_at:
+            lines.append(f"تاریخ ثبت‌نام: {utc_naive_to_local_str(reg.submitted_at)}")
+        if answer_lines:
+            lines.append("")
+            lines.extend(answer_lines)
+        event_id = reg.event_id
+        can_delete = reg.status in ACTIVE_STATUSES
+    finally:
+        session.close()
+
+    buttons = []
+    if can_delete:
+        buttons.append(
+            [InlineKeyboardButton("🗑 حذف این ثبت‌نام", callback_data=f"admin_event_reg_delask_{registration_id}")]
+        )
+    buttons.append([InlineKeyboardButton("⬅️ بازگشت به لیست", callback_data=f"admin_event_regs_{event_id}")])
+    await query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def admin_event_registrant_delete_prompt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    if not is_admin_telegram_id(query.from_user.id):
+        await query.edit_message_text("⛔️ شما به این بخش دسترسی ندارید.")
+        return
+
+    registration_id = context.match.group("registration_id")
+    session = get_session()
+    try:
+        reg = session.query(Registration).filter_by(id=registration_id).first()
+        if reg is None:
+            await query.edit_message_text("این ثبت‌نام یافت نشد.")
+            return
+        user = session.query(UserAccount).filter_by(id=reg.user_id).first()
+        name = "این کاربر"
+        if user:
+            name = user.full_name or (f"@{user.username}" if user.username else str(user.telegram_id))
+    finally:
+        session.close()
+
+    keyboard = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("✅ بله، حذف کن", callback_data=f"admin_event_reg_delyes_{registration_id}")],
+            [InlineKeyboardButton("❌ انصراف", callback_data=f"admin_event_reg_view_{registration_id}")],
+        ]
+    )
+    await query.edit_message_text(f"آیا از حذف ثبت‌نام {name} مطمئن هستید؟", reply_markup=keyboard)
+
+
+async def admin_event_registrant_delete_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    if not is_admin_telegram_id(query.from_user.id):
+        await query.edit_message_text("⛔️ شما به این بخش دسترسی ندارید.")
+        return
+
+    registration_id = context.match.group("registration_id")
+    session = get_session()
+    try:
+        reg = session.query(Registration).filter_by(id=registration_id).first()
+        if reg is None or reg.status not in ACTIVE_STATUSES:
+            await query.edit_message_text("این عملیات دیگر ممکن نیست.")
+            return
+
+        reg.status = RegistrationStatus.CANCELLED
+        reg.offer_expires_at = None
+        user = session.query(UserAccount).filter_by(id=reg.user_id).first()
+        event = session.query(Event).filter_by(id=reg.event_id).first()
+        user_telegram_id = user.telegram_id if user else None
+        event_title = event.title if event else ""
+        event_id = reg.event_id
+        tracking_code = reg.tracking_code
+        session.commit()
+    except Exception:
+        session.rollback()
+        await query.edit_message_text("⚠️ خطایی رخ داد. دوباره تلاش کنید.")
+        return
+    finally:
+        session.close()
+
+    log_admin_activity(
+        query.from_user.id,
+        query.from_user.username,
+        "registration_removed",
+        f"ثبت‌نام {tracking_code} در «{event_title}» را حذف کرد",
+    )
+
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("⬅️ بازگشت به لیست", callback_data=f"admin_event_regs_{event_id}")]]
+    )
+    await query.edit_message_text("✅ ثبت‌نام حذف شد.", reply_markup=keyboard)
+
+    if user_telegram_id:
+        try:
+            await context.bot.send_message(
+                chat_id=user_telegram_id,
+                text=f"⚠️ ثبت‌نام شما برای «{event_title}» (کد پیگیری {tracking_code}) توسط ادمین حذف شد.",
+            )
+        except Exception:
+            pass
+
+    await try_promote_waitlist(context.bot, event_id)
 
 
 ADD_TITLE, ADD_DESCRIPTION, ADD_CAPACITY, ADD_PRICE, ADD_CARD_NUMBER, ADD_DATE, ADD_VENUE, ADD_FIELDS = range(8)

@@ -23,7 +23,8 @@ from bot.activity_log import log_admin_activity
 from bot.keyboards import BTN_CANCEL, cancel_reply_keyboard, main_reply_keyboard
 from bot.notifications import broadcast_to_all_users
 from database.db import get_session
-from database.models import JournalIssue
+from database.models import JournalIssue, JournalIssueEngagement, UserAccount
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 # --- کوئری‌های کمکی ---
 
@@ -59,7 +60,43 @@ def _issue_caption(issue: JournalIssue) -> str:
     return "\n".join(lines)
 
 
-def _latest_issue_view():
+def _record_engagement(telegram_id: int, issue_id: str, action: str) -> None:
+    """یک بازدید/دانلود را برای این کاربر ثبت می‌کند — اگر قبلاً برای همین (کاربر،
+    شماره، نوع‌کنش) ثبت شده باشد، نادیده گرفته می‌شود (پس شمارش همیشه یکتاست)."""
+    session = get_session()
+    try:
+        user = session.query(UserAccount).filter_by(telegram_id=telegram_id).first()
+        if user is None:
+            return
+        stmt = (
+            pg_insert(JournalIssueEngagement)
+            .values(journal_issue_id=issue_id, user_id=user.id, action=action)
+            .on_conflict_do_nothing(index_elements=["journal_issue_id", "user_id", "action"])
+        )
+        session.execute(stmt)
+        session.commit()
+    finally:
+        session.close()
+
+
+def get_issue_engagement_counts(issue_id: str) -> tuple:
+    """تعداد بازدید و دانلود یکتای یک شماره خاص را برمی‌گرداند: (بازدید, دانلود)."""
+    session = get_session()
+    try:
+        views = (
+            session.query(JournalIssueEngagement).filter_by(journal_issue_id=issue_id, action="view").count()
+        )
+        downloads = (
+            session.query(JournalIssueEngagement)
+            .filter_by(journal_issue_id=issue_id, action="download")
+            .count()
+        )
+        return views, downloads
+    finally:
+        session.close()
+
+
+def _latest_issue_view(telegram_id: int = None):
     issue = get_latest_issue()
     if issue is None:
         text = "📚 هنوز هیچ شماره‌ای از نشریه منتشر نشده است."
@@ -67,6 +104,9 @@ def _latest_issue_view():
             [[InlineKeyboardButton("🗄 آرشیو شماره‌های قبلی", callback_data="journal_archive")]]
         )
         return text, keyboard
+
+    if telegram_id is not None:
+        _record_engagement(telegram_id, issue.id, "view")
 
     keyboard = InlineKeyboardMarkup(
         [
@@ -82,7 +122,7 @@ def _latest_issue_view():
 
 async def journal_menu_text_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """ورودی از دکمه ثابت «📚 نشریه پژواک شیمی»."""
-    text, keyboard = _latest_issue_view()
+    text, keyboard = _latest_issue_view(update.effective_user.id)
     await update.message.reply_text(text, reply_markup=keyboard)
 
 
@@ -90,7 +130,7 @@ async def journal_latest_callback(update: Update, context: ContextTypes.DEFAULT_
     """دکمه «بازگشت» از آرشیو — نمایش دوباره شماره فعلی."""
     query = update.callback_query
     await query.answer()
-    text, keyboard = _latest_issue_view()
+    text, keyboard = _latest_issue_view(query.from_user.id)
     await query.edit_message_text(text, reply_markup=keyboard)
 
 
@@ -122,6 +162,8 @@ async def journal_view_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text("این شماره یافت نشد.")
         return
 
+    _record_engagement(query.from_user.id, issue.id, "view")
+
     keyboard = InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("📥 دانلود PDF", callback_data=f"journal_download_{issue.id}")],
@@ -146,6 +188,7 @@ async def journal_download_callback(update: Update, context: ContextTypes.DEFAUL
         document=issue.pdf_file_url,
         caption=f"شماره {issue.issue_number} — {issue.title}",
     )
+    _record_engagement(query.from_user.id, issue.id, "download")
 
 
 # --- مدیریت نشریه توسط ادمین ---
@@ -190,7 +233,12 @@ async def admin_journal_list_callback(update: Update, context: ContextTypes.DEFA
 
 
 def _issue_edit_view(issue: JournalIssue):
-    text = _issue_caption(issue) + "\n\n✏️ برای ویرایش، یکی از گزینه‌های زیر را انتخاب کنید:"
+    views, downloads = get_issue_engagement_counts(issue.id)
+    text = (
+        _issue_caption(issue)
+        + f"\n\n👁 بازدید یکتا: {views}   📥 دانلود یکتا: {downloads}"
+        + "\n\n✏️ برای ویرایش، یکی از گزینه‌های زیر را انتخاب کنید:"
+    )
     keyboard = InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("✏️ ویرایش عنوان", callback_data=f"admin_journal_edit_title_{issue.id}")],

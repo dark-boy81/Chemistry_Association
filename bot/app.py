@@ -72,6 +72,7 @@ from bot.handlers.start import start_command
 from bot.handlers.stats import (
     admin_activity_log_callback,
     admin_stats_export_callback,
+    admin_stats_journal_callback,
     admin_stats_menu_callback,
     admin_stats_pick_event_callback,
 )
@@ -229,6 +230,7 @@ def build_application() -> Application:
     application.add_handler(
         CallbackQueryHandler(admin_stats_pick_event_callback, pattern="^admin_stats_pick_event$")
     )
+    application.add_handler(CallbackQueryHandler(admin_stats_journal_callback, pattern="^admin_stats_journal$"))
     application.add_handler(
         CallbackQueryHandler(admin_stats_export_callback, pattern=r"^admin_stats_export_(?P<event_id>.+)$")
     )

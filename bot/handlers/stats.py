@@ -21,6 +21,7 @@ from database.models import (
     EventField,
     FAQ,
     JournalIssue,
+    JournalIssueEngagement,
     Registration,
     RegistrationFieldValue,
     RegistrationStatus,
@@ -66,9 +67,48 @@ async def admin_stats_menu_callback(update: Update, context: ContextTypes.DEFAUL
 
     buttons = [
         [InlineKeyboardButton("📥 خروجی اکسل ثبت‌نامی‌های یک رویداد", callback_data="admin_stats_pick_event")],
+        [InlineKeyboardButton("📚 آمار بازدید/دانلود نشریه", callback_data="admin_stats_journal")],
         [InlineKeyboardButton("⬅️ بازگشت", callback_data="admin_menu")],
     ]
     await query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def admin_stats_journal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    if not is_admin_telegram_id(query.from_user.id):
+        await query.edit_message_text("⛔️ شما به این بخش دسترسی ندارید.")
+        return
+
+    session = get_session()
+    try:
+        issues = session.query(JournalIssue).order_by(JournalIssue.issue_number.desc()).all()
+        rows = []
+        for issue in issues:
+            views = (
+                session.query(JournalIssueEngagement)
+                .filter_by(journal_issue_id=issue.id, action="view")
+                .count()
+            )
+            downloads = (
+                session.query(JournalIssueEngagement)
+                .filter_by(journal_issue_id=issue.id, action="download")
+                .count()
+            )
+            rows.append((issue.issue_number, issue.title, views, downloads))
+    finally:
+        session.close()
+
+    if not rows:
+        text = "📚 هنوز هیچ شماره‌ای منتشر نشده است."
+    else:
+        lines = ["📚 آمار بازدید/دانلود یکتای نشریه:", ""]
+        for number, title, views, downloads in rows:
+            lines.append(f"شماره {number} — {title}\n  👁 بازدید: {views}   📥 دانلود: {downloads}")
+        text = "\n".join(lines)
+
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ بازگشت", callback_data="admin_stats")]])
+    await query.edit_message_text(text, reply_markup=keyboard)
 
 
 async def admin_stats_pick_event_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

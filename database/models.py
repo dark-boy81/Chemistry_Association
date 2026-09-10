@@ -213,3 +213,21 @@ class AdminActivityLog(Base):
     action = Column(String(100), nullable=False)
     description = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class JournalIssueEngagement(Base):
+    """ثبت بازدید/دانلود یکتای هر کاربر از هر شماره نشریه — برای هر (شماره، کاربر،
+    نوع‌کنش) فقط یک ردیف ذخیره می‌شود (به‌خاطر UniqueConstraint زیر)، پس شمردن
+    تعداد ردیف‌ها مستقیماً همان تعداد یکتای بازدید/دانلود است."""
+
+    __tablename__ = "journal_issue_engagements"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    journal_issue_id = Column(UUID(as_uuid=False), ForeignKey("journal_issues.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    action = Column(String(20), nullable=False)  # "view" یا "download"
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("journal_issue_id", "user_id", "action", name="uq_journal_engagement"),
+    )

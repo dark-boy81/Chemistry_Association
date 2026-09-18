@@ -232,11 +232,12 @@ async def admin_journal_list_callback(update: Update, context: ContextTypes.DEFA
     )
 
 
-def _issue_edit_view(issue: JournalIssue):
+def _issue_edit_view(issue: JournalIssue, bot_username: str):
     views, downloads = get_issue_engagement_counts(issue.id)
     text = (
         _issue_caption(issue)
         + f"\n\n👁 بازدید یکتا: {views}   📥 دانلود یکتا: {downloads}"
+        + f"\n\n🔗 لینک مستقیم:\nhttps://t.me/{bot_username}?start=is_{issue.id}"
         + "\n\n✏️ برای ویرایش، یکی از گزینه‌های زیر را انتخاب کنید:"
     )
     keyboard = InlineKeyboardMarkup(
@@ -264,7 +265,7 @@ async def admin_journal_editview_callback(update: Update, context: ContextTypes.
         await query.edit_message_text("این شماره یافت نشد.")
         return
 
-    text, keyboard = _issue_edit_view(issue)
+    text, keyboard = _issue_edit_view(issue, context.bot.username)
     await query.edit_message_text(text, reply_markup=keyboard)
 
 
@@ -462,6 +463,7 @@ async def admin_journal_receive_abstract(update: Update, context: ContextTypes.D
         )
         session.add(issue)
         session.commit()
+        issue_id = issue.id
     finally:
         session.close()
 
@@ -472,8 +474,10 @@ async def admin_journal_receive_abstract(update: Update, context: ContextTypes.D
         "journal_created",
         f"شماره {data['issue_number']} نشریه («{data['title']}») را اضافه کرد",
     )
+    share_link = f"https://t.me/{context.bot.username}?start=is_{issue_id}"
     await update.message.reply_text(
-        f"✅ شماره {data['issue_number']} با عنوان «{data['title']}» با موفقیت اضافه شد.",
+        f"✅ شماره {data['issue_number']} با عنوان «{data['title']}» با موفقیت اضافه شد.\n\n"
+        f"🔗 لینک مستقیم برای اشتراک‌گذاری:\n{share_link}",
         reply_markup=main_reply_keyboard(True),
     )
     await broadcast_to_all_users(

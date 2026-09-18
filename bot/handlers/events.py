@@ -810,6 +810,8 @@ async def admin_event_detail_callback(update: Update, context: ContextTypes.DEFA
     lines.append("📋 ثبت‌نام‌ها:")
     for status, count in status_counts.items():
         lines.append(f"  • {STATUS_LABELS.get(status, status)}: {count}")
+    lines.append("")
+    lines.append(f"🔗 لینک مستقیم:\nhttps://t.me/{context.bot.username}?start=ev_{event_id}")
 
     buttons = [
         [
@@ -1202,12 +1204,16 @@ async def admin_event_confirm_fields(update: Update, context: ContextTypes.DEFAU
             order += 1
         session.commit()
         title = event.title
+        event_id = event.id
     finally:
         session.close()
 
     context.user_data.pop("new_event", None)
     log_admin_activity(query.from_user.id, query.from_user.username, "event_created", f"رویداد «{title}» را ساخت")
-    await query.edit_message_text(f"✅ رویداد «{title}» با موفقیت ساخته شد.")
+    share_link = f"https://t.me/{context.bot.username}?start=ev_{event_id}"
+    await query.edit_message_text(
+        f"✅ رویداد «{title}» با موفقیت ساخته شد.\n\n🔗 لینک مستقیم برای اشتراک‌گذاری:\n{share_link}"
+    )
     await context.bot.send_message(
         chat_id=query.from_user.id,
         text="می‌توانید از منوی پایین صفحه ادامه دهید.",

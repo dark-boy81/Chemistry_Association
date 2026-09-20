@@ -15,6 +15,7 @@ from telegram.ext import (
 
 from bot.handlers.start import is_admin_telegram_id
 from bot.keyboards import BTN_CANCEL, cancel_reply_keyboard, main_reply_keyboard
+from bot.utils.rate_limit import contact_limiter, format_wait
 from bot.utils.validation import MAX_ADMIN_MESSAGE_LEN, MAX_CONTACT_MESSAGE_LEN, length_error
 from database.db import get_session
 from database.models import Admin, MessageDirection, SupportMessage, UserAccount
@@ -47,6 +48,16 @@ async def contact_receive_message(update: Update, context: ContextTypes.DEFAULT_
     error = length_error(text, MAX_CONTACT_MESSAGE_LEN, "پیام شما")
     if error:
         await update.message.reply_text(error)
+        return WAITING_USER_MESSAGE
+
+    # جلوگیری از اسپم: هر پیام به همه‌ی ادمین‌ها فرستاده می‌شود و در دیتابیس ذخیره می‌شود
+    decision = contact_limiter.check(tg_user.id)
+    if not decision.allowed:
+        if decision.notify:
+            await update.message.reply_text(
+                f"⏳ برای جلوگیری از ارسال پیام‌های پشت‌سرهم، لطفاً {format_wait(decision.retry_after)} "
+                "دیگر پیام خود را دوباره ارسال کنید."
+            )
         return WAITING_USER_MESSAGE
 
     session = get_session()

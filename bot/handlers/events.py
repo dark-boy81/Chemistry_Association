@@ -22,6 +22,7 @@ import logging
 import random
 import re
 import string
+import uuid
 from datetime import datetime
 
 import jdatetime
@@ -41,6 +42,7 @@ from bot.handlers.start import is_admin_telegram_id
 from bot.keyboards import BTN_CANCEL, cancel_reply_keyboard, main_reply_keyboard
 from bot.notifications import broadcast_to_all_users, try_promote_waitlist
 from bot.tz import local_to_utc_naive, utc_naive_to_local_str
+from bot.utils.rate_limit import format_wait, receipt_limiter
 from bot.utils.receipts import extract_receipt, send_receipt_message
 from bot.utils.validation import (
     MAX_ADMIN_MESSAGE_LEN,
@@ -292,6 +294,45 @@ async def event_view_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text(text, reply_markup=keyboard)
 
 
+_RECEIPT_THROTTLE_TEXT = "⏳ فایل‌های زیادی پشت‌سرهم ارسال شد. لطفاً {wait} صبر کنید و دوباره تلاش کنید."
+
+
+def _is_valid_uuid(value) -> bool:
+    try:
+        uuid.UUID(str(value))
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
+def get_owned_registration(session, registration_id: str, telegram_id: int):
+    """
+    ثبت‌نامی را برمی‌گرداند که «متعلق به همین کاربر تلگرام» باشد؛ در غیر این صورت None.
+
+    امنیت (کنترل دسترسی سمت سرور): شناسه‌ی داخل callback_data قابل اعتماد نیست و UUID بودنش
+    جایگزین بررسی مالکیت نمی‌شود. برای اینکه وجود شناسه‌های دیگران لو نرود، «وجود ندارد» و
+    «مال شخص دیگری است» یک نتیجه‌ی یکسان (None) دارند؛ فقط در لاگ فرقشان ثبت می‌شود.
+    """
+    if not _is_valid_uuid(registration_id):
+        return None
+
+    registration = (
+        session.query(Registration)
+        .join(UserAccount, Registration.user_id == UserAccount.id)
+        .filter(Registration.id == registration_id, UserAccount.telegram_id == telegram_id)
+        .first()
+    )
+    if registration is None:
+        exists = session.query(Registration.id).filter(Registration.id == registration_id).first() is not None
+        if exists:
+            logger.warning(
+                "تلاش برای دسترسی به ثبت‌نام دیگران: telegram_id=%s registration_id=%s",
+                telegram_id,
+                registration_id,
+            )
+    return registration
+
+
 async def event_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -299,7 +340,8 @@ async def event_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TY
     registration_id = context.match.group("registration_id")
     session = get_session()
     try:
-        registration = session.query(Registration).filter_by(id=registration_id).first()
+        # امنیت: فقط صاحب ثبت‌نام می‌تواند آن را لغو کند
+        registration = get_owned_registration(session, registration_id, query.from_user.id)
         if registration is None:
             await query.edit_message_text("این ثبت‌نام یافت نشد.")
             return
@@ -334,6 +376,13 @@ async def offer_receipt_received(update: Update, context: ContextTypes.DEFAULT_T
         return  # پیام نه عکس بود نه فایل
 
     tg_user = update.effective_user
+
+    decision = receipt_limiter.check(tg_user.id)
+    if not decision.allowed:
+        if decision.notify:
+            await update.message.reply_text(_RECEIPT_THROTTLE_TEXT.format(wait=format_wait(decision.retry_after)))
+        return
+
     invalid_receipt_message = None
     session = get_session()
     try:
@@ -449,15 +498,10 @@ async def my_activity_view_callback(update: Update, context: ContextTypes.DEFAUL
     registration_id = context.match.group("registration_id")
     session = get_session()
     try:
-        registration = session.query(Registration).filter_by(id=registration_id).first()
+        # امنیت: فقط صاحب ثبت‌نام می‌تواند جزئیاتش را ببیند
+        registration = get_owned_registration(session, registration_id, query.from_user.id)
         if registration is None:
             await query.edit_message_text("این ثبت‌نام یافت نشد.")
-            return
-
-        # امنیت: مطمئن شویم این ثبت‌نام واقعاً متعلق به همین کاربر است
-        requester = session.query(UserAccount).filter_by(telegram_id=query.from_user.id).first()
-        if requester is None or registration.user_id != requester.id:
-            await query.edit_message_text("⛔️ به این ثبت‌نام دسترسی ندارید.")
             return
 
         event = session.query(Event).filter_by(id=registration.event_id).first()
@@ -603,6 +647,12 @@ async def reg_collect_field(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 async def reg_receive_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    decision = receipt_limiter.check(update.effective_user.id)
+    if not decision.allowed:
+        if decision.notify:
+            await update.message.reply_text(_RECEIPT_THROTTLE_TEXT.format(wait=format_wait(decision.retry_after)))
+        return REG_RECEIPT
+
     receipt, receipt_error = extract_receipt(update.message)
 
     if receipt_error:

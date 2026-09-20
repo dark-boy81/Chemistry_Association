@@ -10,6 +10,7 @@
 اجرا روی Render:
     uvicorn server:app --host 0.0.0.0 --port $PORT
 """
+import hmac
 import logging
 
 from fastapi import FastAPI, Request, Response
@@ -70,10 +71,17 @@ async def health_check() -> dict:
     return {"status": "ok", "service": "chemistry-assoc-bot"}
 
 
+def _secret_matches(header_value) -> bool:
+    """مقایسه‌ی هم‌زمان‌بر-ثابت (constant-time) تا از طریق زمان پاسخ، secret حدس زده نشود."""
+    if not header_value:
+        return False
+    return hmac.compare_digest(header_value.encode("utf-8"), WEBHOOK_SECRET.encode("utf-8"))
+
+
 @app.post(WEBHOOK_PATH)
 async def telegram_webhook(request: Request) -> Response:
     secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-    if secret_header != WEBHOOK_SECRET:
+    if not _secret_matches(secret_header):
         logger.warning("درخواست webhook با secret token نامعتبر رد شد.")
         return Response(status_code=403)
 

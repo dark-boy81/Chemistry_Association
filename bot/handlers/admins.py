@@ -15,6 +15,7 @@ from telegram.ext import (
 from bot.handlers.start import is_admin_telegram_id
 from bot.activity_log import log_admin_activity
 from bot.keyboards import BTN_CANCEL, admin_menu_keyboard, cancel_reply_keyboard, main_reply_keyboard
+from bot.utils.validation import MAX_TELEGRAM_ID_DIGITS
 from database.db import get_session
 from database.models import (
     FAQ,
@@ -128,7 +129,7 @@ async def admin_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def admin_add_receive_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
-    if not text.isdigit():
+    if not text.isdecimal() or len(text) > MAX_TELEGRAM_ID_DIGITS:
         await update.message.reply_text("لطفاً فقط آیدی عددی تلگرام را بفرستید.")
         return ADD_ADMIN_ID
 

@@ -15,6 +15,7 @@ from telegram.ext import (
 
 from bot.handlers.start import is_admin_telegram_id
 from bot.keyboards import BTN_CANCEL, cancel_reply_keyboard, main_reply_keyboard
+from bot.utils.validation import MAX_ADMIN_MESSAGE_LEN, MAX_CONTACT_MESSAGE_LEN, length_error
 from database.db import get_session
 from database.models import Admin, MessageDirection, SupportMessage, UserAccount
 
@@ -42,6 +43,11 @@ async def contact_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 async def contact_receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     tg_user = update.effective_user
     text = update.message.text.strip()
+
+    error = length_error(text, MAX_CONTACT_MESSAGE_LEN, "پیام شما")
+    if error:
+        await update.message.reply_text(error)
+        return WAITING_USER_MESSAGE
 
     session = get_session()
     try:
@@ -142,6 +148,10 @@ async def admin_reply_receive(update: Update, context: ContextTypes.DEFAULT_TYPE
         return ConversationHandler.END
 
     text = update.message.text.strip()
+    error = length_error(text, MAX_ADMIN_MESSAGE_LEN, "پاسخ")
+    if error:
+        await update.message.reply_text(error)
+        return WAITING_ADMIN_REPLY
     session = get_session()
     try:
         original = session.query(SupportMessage).filter_by(id=reply_to["message_id"]).first()

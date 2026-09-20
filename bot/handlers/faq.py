@@ -16,6 +16,7 @@ from telegram.ext import (
 from bot.handlers.start import is_admin_telegram_id
 from bot.activity_log import log_admin_activity
 from bot.keyboards import BTN_CANCEL, cancel_reply_keyboard, main_reply_keyboard
+from bot.utils.validation import MAX_FAQ_ANSWER_LEN, MAX_FAQ_QUESTION_LEN, length_error
 from database.db import get_session
 from database.models import Admin, FAQ
 
@@ -193,14 +194,24 @@ async def admin_faq_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def admin_faq_receive_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["new_faq"]["question"] = update.message.text.strip()
+    text = update.message.text.strip()
+    error = length_error(text, MAX_FAQ_QUESTION_LEN, "متن سوال")
+    if error:
+        await update.message.reply_text(error)
+        return ADD_QUESTION
+    context.user_data["new_faq"]["question"] = text
     await update.message.reply_text("متن پاسخ را بفرستید:")
     return ADD_ANSWER
 
 
 async def admin_faq_receive_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     data = context.user_data.get("new_faq", {})
-    data["answer"] = update.message.text.strip()
+    answer_text = update.message.text.strip()
+    error = length_error(answer_text, MAX_FAQ_ANSWER_LEN, "متن پاسخ")
+    if error:
+        await update.message.reply_text(error)
+        return ADD_ANSWER
+    data["answer"] = answer_text
 
     session = get_session()
     try:
@@ -285,6 +296,16 @@ async def admin_faq_edit_receive_value(update: Update, context: ContextTypes.DEF
     text = update.message.text.strip()
     if not text:
         await update.message.reply_text("متن نمی‌تواند خالی باشد.")
+        return WAITING_EDIT_VALUE
+
+    is_question = editing["field"] == "question"
+    error = length_error(
+        text,
+        MAX_FAQ_QUESTION_LEN if is_question else MAX_FAQ_ANSWER_LEN,
+        "متن سوال" if is_question else "متن پاسخ",
+    )
+    if error:
+        await update.message.reply_text(error)
         return WAITING_EDIT_VALUE
 
     session = get_session()

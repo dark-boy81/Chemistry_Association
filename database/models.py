@@ -149,6 +149,9 @@ class Registration(Base):
     tracking_code = Column(String(20), unique=True, nullable=False)
     status = Column(Enum(RegistrationStatus), default=RegistrationStatus.PENDING)
     receipt_file_url = Column(Text, nullable=True)
+    # نوع فایل فیش: "photo" یا "document" (تلگرام برای هرکدام file_id متفاوت می‌دهد و باید با
+    # متد مخصوص خودش ارسال شود). ثبت‌نام‌های قدیمی خالی‌اند و هنگام نمایش تشخیص داده می‌شوند.
+    receipt_file_type = Column(String(20), nullable=True)
     submitted_at = Column(DateTime, default=datetime.utcnow)
     reviewed_at = Column(DateTime, nullable=True)
     reviewed_by_admin_id = Column(UUID(as_uuid=False), ForeignKey("admins.id", ondelete="SET NULL"), nullable=True)

@@ -17,6 +17,7 @@ from bot.handlers.start import is_admin_telegram_id
 from bot.keyboards import BTN_CANCEL, cancel_reply_keyboard, main_reply_keyboard
 from bot.notifications import broadcast_to_all_users
 from database.db import get_session
+from bot.utils.validation import MAX_ADMIN_MESSAGE_LEN, length_error
 from database.models import UserAccount
 
 WAITING_BROADCAST_MESSAGE = 0
@@ -40,6 +41,11 @@ async def admin_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def admin_broadcast_receive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
+
+    error = length_error(text, MAX_ADMIN_MESSAGE_LEN, "پیام")
+    if error:
+        await update.message.reply_text(error)
+        return WAITING_BROADCAST_MESSAGE
 
     session = get_session()
     try:

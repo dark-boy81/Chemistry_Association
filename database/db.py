@@ -45,6 +45,7 @@ def _apply_lightweight_migrations() -> None:
         "ALTER TABLE events ADD COLUMN IF NOT EXISTS venue VARCHAR(300)",
         "ALTER TABLE registrations DROP CONSTRAINT IF EXISTS uq_event_user",
         "ALTER TABLE registrations ADD COLUMN IF NOT EXISTS offer_expires_at TIMESTAMP",
+        "ALTER TABLE registrations ADD COLUMN IF NOT EXISTS receipt_file_type VARCHAR(20)",
     ]
     with engine.begin() as conn:
         for statement in statements:

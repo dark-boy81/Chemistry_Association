@@ -22,6 +22,13 @@ from bot.handlers.start import is_admin_telegram_id
 from bot.activity_log import log_admin_activity
 from bot.keyboards import BTN_CANCEL, cancel_reply_keyboard, main_reply_keyboard
 from bot.notifications import broadcast_to_all_users
+from bot.utils.validation import (
+    MAX_JOURNAL_ABSTRACT_LEN,
+    MAX_JOURNAL_NUMBER,
+    MAX_JOURNAL_TITLE_LEN,
+    length_error,
+    parse_int_in_range,
+)
 from database.db import get_session
 from database.models import JournalIssue, JournalIssueEngagement, UserAccount
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -326,10 +333,10 @@ async def admin_journal_edit_receive_value(update: Update, context: ContextTypes
 
         elif field == "number":
             text = update.message.text.strip() if update.message.text else ""
-            if not text.isdigit():
-                await update.message.reply_text("لطفاً فقط عدد بفرستید.")
+            new_number = parse_int_in_range(text, 1, MAX_JOURNAL_NUMBER)
+            if new_number is None:
+                await update.message.reply_text(f"لطفاً فقط عدد (بین ۱ تا {MAX_JOURNAL_NUMBER}) بفرستید.")
                 return WAITING_EDIT_VALUE
-            new_number = int(text)
             duplicate = (
                 session.query(JournalIssue)
                 .filter(JournalIssue.issue_number == new_number, JournalIssue.id != issue_id)
@@ -344,6 +351,15 @@ async def admin_journal_edit_receive_value(update: Update, context: ContextTypes
             text = update.message.text.strip() if update.message.text else ""
             if not text:
                 await update.message.reply_text("متن نمی‌تواند خالی باشد.")
+                return WAITING_EDIT_VALUE
+            is_title = field == "title"
+            error = length_error(
+                text,
+                MAX_JOURNAL_TITLE_LEN if is_title else MAX_JOURNAL_ABSTRACT_LEN,
+                "عنوان" if is_title else "چکیده",
+            )
+            if error:
+                await update.message.reply_text(error)
                 return WAITING_EDIT_VALUE
             setattr(issue, field, text)
 
@@ -424,25 +440,39 @@ async def admin_journal_receive_pdf(update: Update, context: ContextTypes.DEFAUL
 
 
 async def admin_journal_receive_title(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["new_issue"]["title"] = update.message.text.strip()
+    text = update.message.text.strip()
+    if not text:
+        await update.message.reply_text("عنوان نمی‌تواند خالی باشد.")
+        return WAITING_TITLE
+    error = length_error(text, MAX_JOURNAL_TITLE_LEN, "عنوان")
+    if error:
+        await update.message.reply_text(error)
+        return WAITING_TITLE
+    context.user_data["new_issue"]["title"] = text
     await update.message.reply_text("شماره این نشریه چندم است؟ (فقط عدد)")
     return WAITING_NUMBER
 
 
 async def admin_journal_receive_number(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
-    if not text.isdigit():
-        await update.message.reply_text("لطفاً فقط عدد بفرستید (مثلاً 4).")
+    issue_number = parse_int_in_range(text, 1, MAX_JOURNAL_NUMBER)
+    if issue_number is None:
+        await update.message.reply_text(f"لطفاً فقط عدد (بین ۱ تا {MAX_JOURNAL_NUMBER}) بفرستید (مثلاً 4).")
         return WAITING_NUMBER
 
-    context.user_data["new_issue"]["issue_number"] = int(text)
+    context.user_data["new_issue"]["issue_number"] = issue_number
     await update.message.reply_text("چکیده این شماره را بنویسید:")
     return WAITING_ABSTRACT
 
 
 async def admin_journal_receive_abstract(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     data = context.user_data.get("new_issue", {})
-    data["abstract"] = update.message.text.strip()
+    abstract_text = update.message.text.strip()
+    error = length_error(abstract_text, MAX_JOURNAL_ABSTRACT_LEN, "چکیده")
+    if error:
+        await update.message.reply_text(error)
+        return WAITING_ABSTRACT
+    data["abstract"] = abstract_text
 
     session = get_session()
     try:

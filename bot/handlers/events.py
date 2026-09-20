@@ -18,6 +18,7 @@
   رسیدن فیش جدید)
 """
 import asyncio
+import logging
 import random
 import re
 import string
@@ -25,6 +26,7 @@ from datetime import datetime
 
 import jdatetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import TelegramError
 from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
@@ -39,6 +41,14 @@ from bot.handlers.start import is_admin_telegram_id
 from bot.keyboards import BTN_CANCEL, cancel_reply_keyboard, main_reply_keyboard
 from bot.notifications import broadcast_to_all_users, try_promote_waitlist
 from bot.tz import local_to_utc_naive, utc_naive_to_local_str
+from bot.utils.receipts import extract_receipt, send_receipt_message
+from bot.utils.validation import (
+    MAX_ADMIN_MESSAGE_LEN,
+    MAX_NUMERIC_FIELD_LEN,
+    MAX_TEXT_FIELD_LEN,
+    length_error,
+    validate_event_value,
+)
 from database.db import get_session
 from database.models import (
     Admin,
@@ -50,6 +60,8 @@ from database.models import (
     RegistrationStatus,
     UserAccount,
 )
+
+logger = logging.getLogger(__name__)
 
 # --- فهرست از پیش تعریف‌شده فیلدهای ثبت‌نام ---
 # ادمین هنگام ساخت رویداد از بین این‌ها انتخاب می‌کند که کدام‌ها موردنیازند.
@@ -317,15 +329,12 @@ async def event_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def offer_receipt_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    file_id = None
-    if update.message.photo:
-        file_id = update.message.photo[-1].file_id
-    elif update.message.document:
-        file_id = update.message.document.file_id
-    if file_id is None:
-        return
+    receipt, receipt_error = extract_receipt(update.message)
+    if receipt is None and receipt_error is None:
+        return  # پیام نه عکس بود نه فایل
 
     tg_user = update.effective_user
+    invalid_receipt_message = None
     session = get_session()
     try:
         user = session.query(UserAccount).filter_by(telegram_id=tg_user.id).first()
@@ -344,18 +353,28 @@ async def offer_receipt_received(update: Update, context: ContextTypes.DEFAULT_T
             # مهلتش گذشته؛ Job جداگانه به‌زودی این را لغو و نوبت را به نفر بعدی می‌دهد
             return
 
-        offer.status = RegistrationStatus.PENDING
-        offer.receipt_file_url = file_id
-        offer.offer_expires_at = None
+        if receipt is None:
+            # فایل نامعتبر است؛ پیشنهاد دست‌نخورده می‌ماند تا کاربر دوباره تلاش کند.
+            # (پیام خطا فقط وقتی داده می‌شود که کاربر واقعاً منتظر ارسال فیش باشد.)
+            invalid_receipt_message = receipt_error
+        else:
+            offer.status = RegistrationStatus.PENDING
+            offer.receipt_file_url = receipt.file_id
+            offer.receipt_file_type = receipt.file_type
+            offer.offer_expires_at = None
 
-        event = session.query(Event).filter_by(id=offer.event_id).first()
-        event_title = event.title if event else ""
-        tracking_code = offer.tracking_code
-        registration_id = offer.id
-        admin_ids = [a.telegram_id for a in session.query(Admin).all()]
-        session.commit()
+            event = session.query(Event).filter_by(id=offer.event_id).first()
+            event_title = event.title if event else ""
+            tracking_code = offer.tracking_code
+            registration_id = offer.id
+            admin_ids = [a.telegram_id for a in session.query(Admin).all()]
+            session.commit()
     finally:
         session.close()
+
+    if invalid_receipt_message:
+        await update.message.reply_text(invalid_receipt_message)
+        return
 
     await update.message.reply_text(
         f"✅ فیش شما دریافت شد و در انتظار بررسی ادمین است.\nکد پیگیری: {tracking_code}",
@@ -557,6 +576,13 @@ async def reg_collect_field(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     field_id, label, field_type = reg["field_queue"][0]
     value = (update.message.text or "").strip()
 
+    is_numeric_field = field_type in (FieldType.NUMBER, FieldType.PHONE)
+    max_len = MAX_NUMERIC_FIELD_LEN if is_numeric_field else MAX_TEXT_FIELD_LEN
+    length_problem = length_error(value, max_len, label)
+    if length_problem:
+        await update.message.reply_text(length_problem)
+        return REG_COLLECTING
+
     if field_type in (FieldType.NUMBER, FieldType.PHONE) and not value.replace("+", "").isdigit():
         await update.message.reply_text(f"لطفاً {label} را فقط با عدد وارد کنید.")
         return REG_COLLECTING
@@ -577,20 +603,24 @@ async def reg_collect_field(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 async def reg_receive_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    file_id = None
-    if update.message.photo:
-        file_id = update.message.photo[-1].file_id
-    elif update.message.document:
-        file_id = update.message.document.file_id
+    receipt, receipt_error = extract_receipt(update.message)
 
-    if file_id is None:
+    if receipt_error:
+        await update.message.reply_text(receipt_error)
+        return REG_RECEIPT
+
+    if receipt is None:
         await update.message.reply_text("لطفاً تصویر یا فایل فیش واریزی را ارسال کنید.")
         return REG_RECEIPT
 
-    return await _finalize_registration(update, context, receipt_file_id=file_id)
+    return await _finalize_registration(
+        update, context, receipt_file_id=receipt.file_id, receipt_file_type=receipt.file_type
+    )
 
 
-async def _finalize_registration(update: Update, context: ContextTypes.DEFAULT_TYPE, receipt_file_id):
+async def _finalize_registration(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, receipt_file_id, receipt_file_type=None
+):
     reg = context.user_data["reg"]
     tg_user = update.effective_user
 
@@ -626,6 +656,7 @@ async def _finalize_registration(update: Update, context: ContextTypes.DEFAULT_T
             tracking_code=_generate_tracking_code(),
             status=status,
             receipt_file_url=receipt_file_id,
+            receipt_file_type=receipt_file_type,
         )
         session.add(registration)
         session.flush()
@@ -1047,13 +1078,22 @@ async def admin_event_add_start(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def admin_event_receive_title(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["new_event"]["title"] = update.message.text.strip()
+    text = update.message.text.strip()
+    error = validate_event_value("title", text)
+    if error:
+        await update.message.reply_text(error)
+        return ADD_TITLE
+    context.user_data["new_event"]["title"] = text
     await update.message.reply_text("توضیحات رویداد را بنویسید (اگر توضیحی نیست، - بفرستید):")
     return ADD_DESCRIPTION
 
 
 async def admin_event_receive_description(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
+    error = validate_event_value("desc", text)
+    if error:
+        await update.message.reply_text(error)
+        return ADD_DESCRIPTION
     context.user_data["new_event"]["description"] = None if text == "-" else text
     await update.message.reply_text("ظرفیت رویداد چند نفر است؟ (فقط عدد)")
     return ADD_CAPACITY
@@ -1061,8 +1101,9 @@ async def admin_event_receive_description(update: Update, context: ContextTypes.
 
 async def admin_event_receive_capacity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
-    if not text.isdigit() or int(text) <= 0:
-        await update.message.reply_text("لطفاً یک عدد صحیح بزرگ‌تر از صفر بفرستید.")
+    error = validate_event_value("capacity", text)
+    if error:
+        await update.message.reply_text(error)
         return ADD_CAPACITY
     context.user_data["new_event"]["capacity"] = int(text)
     await update.message.reply_text("هزینه ثبت‌نام به تومان چقدر است؟ برای رویداد رایگان - بفرستید.")
@@ -1081,8 +1122,9 @@ async def admin_event_receive_price(update: Update, context: ContextTypes.DEFAUL
             "یا برای رد کردن این مرحله، - بفرستید."
         )
         return ADD_DATE
-    if not text.isdigit():
-        await update.message.reply_text("لطفاً فقط عدد بفرستید یا برای رایگان بودن - بفرستید.")
+    error = validate_event_value("price", text)
+    if error:
+        await update.message.reply_text(error)
         return ADD_PRICE
 
     context.user_data["new_event"]["price"] = int(text)
@@ -1094,6 +1136,10 @@ async def admin_event_receive_card_number(update: Update, context: ContextTypes.
     text = update.message.text.strip()
     if not text:
         await update.message.reply_text("لطفاً شماره کارت را بفرستید.")
+        return ADD_CARD_NUMBER
+    error = validate_event_value("card", text)
+    if error:
+        await update.message.reply_text(error)
         return ADD_CARD_NUMBER
 
     context.user_data["new_event"]["card_number"] = text
@@ -1128,6 +1174,10 @@ async def admin_event_receive_date(update: Update, context: ContextTypes.DEFAULT
 
 async def admin_event_receive_venue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
+    error = validate_event_value("venue", text)
+    if error:
+        await update.message.reply_text(error)
+        return ADD_VENUE
     context.user_data["new_event"]["venue"] = None if text == "-" else text
 
     context.user_data["new_event"]["selected_fields"] = set()
@@ -1310,6 +1360,12 @@ async def admin_event_edit_receive_value(update: Update, context: ContextTypes.D
 
     field, event_id = editing["field"], editing["event_id"]
     text = update.message.text.strip()
+
+    error = validate_event_value(field, text)  # برای فیلد تاریخ (date) چیزی چک نمی‌کند
+    if error:
+        await update.message.reply_text(error)
+        return WAITING_EVENT_EDIT_VALUE
+
     capacity_increased = False
 
     session = get_session()
@@ -1529,6 +1585,10 @@ async def admin_event_cancelev_receive(update: Update, context: ContextTypes.DEF
         return ConversationHandler.END
 
     message_text = update.message.text.strip()
+    error = length_error(message_text, MAX_ADMIN_MESSAGE_LEN, "پیام")
+    if error:
+        await update.message.reply_text(error)
+        return WAITING_CANCEL_EVENT_MESSAGE
     session = get_session()
     try:
         event = session.query(Event).filter_by(id=event_id).first()
@@ -1639,6 +1699,10 @@ async def admin_event_notify_receive(update: Update, context: ContextTypes.DEFAU
         return ConversationHandler.END
 
     text = update.message.text.strip()
+    error = length_error(text, MAX_ADMIN_MESSAGE_LEN, "پیام")
+    if error:
+        await update.message.reply_text(error)
+        return WAITING_EVENT_NOTIFY_MESSAGE
     session = get_session()
     try:
         event = session.query(Event).filter_by(id=event_id).first()
@@ -1781,6 +1845,7 @@ async def admin_receipt_view_callback(update: Update, context: ContextTypes.DEFA
         caption_lines.extend(answer_lines)
         caption = "\n".join(caption_lines)
         receipt_file_id = registration.receipt_file_url
+        receipt_file_type = registration.receipt_file_type
     finally:
         session.close()
 
@@ -1795,9 +1860,19 @@ async def admin_receipt_view_callback(update: Update, context: ContextTypes.DEFA
     )
 
     if receipt_file_id:
-        await context.bot.send_photo(
-            chat_id=query.from_user.id, photo=receipt_file_id, caption=caption, reply_markup=keyboard
-        )
+        try:
+            await send_receipt_message(
+                context.bot, query.from_user.id, receipt_file_id, receipt_file_type, caption, keyboard
+            )
+        except TelegramError:
+            # مثلاً file_id نامعتبر (بعد از تعویض توکن ربات) — ادمین همچنان باید بتواند تصمیم بگیرد
+            logger.warning("نمایش فایل فیش ثبت‌نام %s ناموفق بود", registration_id, exc_info=True)
+            await context.bot.send_message(
+                chat_id=query.from_user.id,
+                text=f"{caption[:3500]}\n\n⚠️ فایل فیش قابل نمایش نبود (ممکن است نامعتبر یا قدیمی باشد). "
+                "می‌توانید این ثبت‌نام را رد کنید تا کاربر دوباره فیش بفرستد.",
+                reply_markup=keyboard,
+            )
         try:
             await query.delete_message()
         except Exception:

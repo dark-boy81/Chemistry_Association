@@ -2,7 +2,10 @@
 هندلرهای بخش «مدیریت ادمین‌ها» — فقط ادمین ارشد می‌تواند ادمین اضافه/حذف کند
 یا ارشدیت را به شخص دیگری منتقل کرده و کناره‌گیری کند. حداکثر ۵ ادمین مجاز است.
 """
+import logging
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import TelegramError
 from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
@@ -15,6 +18,7 @@ from telegram.ext import (
 from bot.handlers.start import is_admin_telegram_id
 from bot.activity_log import log_admin_activity
 from bot.keyboards import BTN_CANCEL, admin_menu_keyboard, cancel_reply_keyboard, main_reply_keyboard
+from bot.utils.safe_send import safe_send
 from bot.utils.validation import MAX_TELEGRAM_ID_DIGITS
 from database.db import get_session
 from database.models import (
@@ -26,6 +30,8 @@ from database.models import (
     Registration,
     SupportMessage,
 )
+
+logger = logging.getLogger(__name__)
 
 MAX_ADMINS = 5
 
@@ -155,8 +161,8 @@ async def admin_add_receive_id(update: Update, context: ContextTypes.DEFAULT_TYP
             chat = await context.bot.get_chat(new_telegram_id)
             username = chat.username
             full_name = chat.full_name
-        except Exception:
-            pass
+        except TelegramError:
+            logger.info("گرفتن اطلاعات کاربر جدید (get_chat) ممکن نبود: telegram_id=%s", new_telegram_id)
 
         admin = Admin(
             telegram_id=new_telegram_id,
@@ -179,13 +185,14 @@ async def admin_add_receive_id(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text(
         f"✅ ادمین جدید با آیدی {new_telegram_id} اضافه شد.", reply_markup=main_reply_keyboard(True)
     )
-    try:
-        await context.bot.send_message(
+    await safe_send(
+        context.bot.send_message(
             chat_id=new_telegram_id,
             text="🎉 شما توسط ادمین ارشد به‌عنوان ادمین ربات اضافه شدید.\nبرای مشاهده پنل مدیریت، /start را بزنید.",
-        )
-    except Exception:
-        pass
+        ),
+        context="admin_added_notify",
+        chat_id=new_telegram_id,
+    )
     return ConversationHandler.END
 
 
@@ -263,6 +270,7 @@ async def admin_remove_confirm_callback(update: Update, context: ContextTypes.DE
         session.commit()
     except Exception:
         session.rollback()
+        logger.exception("خطا در حذف ادمین (admin_id=%s)", admin_id)
         await query.edit_message_text("⚠️ خطایی هنگام حذف رخ داد. دوباره تلاش کنید.")
         return
     finally:
@@ -270,10 +278,11 @@ async def admin_remove_confirm_callback(update: Update, context: ContextTypes.DE
 
     log_admin_activity(query.from_user.id, query.from_user.username, "admin_removed", f"{name} را از ادمین‌ها حذف کرد")
     await query.edit_message_text(f"✅ {name} از لیست ادمین‌ها حذف شد.")
-    try:
-        await context.bot.send_message(chat_id=removed_telegram_id, text="دسترسی مدیریتی شما در ربات لغو شد.")
-    except Exception:
-        pass
+    await safe_send(
+        context.bot.send_message(chat_id=removed_telegram_id, text="دسترسی مدیریتی شما در ربات لغو شد."),
+        context="admin_removed_notify",
+        chat_id=removed_telegram_id,
+    )
 
 
 # --- انتقال ارشدیت و کناره‌گیری ---
@@ -359,6 +368,7 @@ async def admin_transfer_execute_callback(update: Update, context: ContextTypes.
         session.commit()
     except Exception:
         session.rollback()
+        logger.exception("خطا در انتقال ارشدیت ادمین")
         await query.edit_message_text("⚠️ خطایی هنگام انتقال ارشدیت رخ داد. دوباره تلاش کنید.")
         return
     finally:
@@ -373,9 +383,10 @@ async def admin_transfer_execute_callback(update: Update, context: ContextTypes.
         text="از همکاری شما در دوران ارشدیت سپاسگزاریم 🙏 همچنان به‌عنوان ادمین عادی در دسترسید.",
         reply_markup=main_reply_keyboard(True),
     )
-    try:
-        await context.bot.send_message(
+    await safe_send(
+        context.bot.send_message(
             chat_id=target_telegram_id, text="🎉 شما اکنون ادمین ارشد ربات انجمن علمی شیمی هستید."
-        )
-    except Exception:
-        pass
+        ),
+        context="senior_transfer_notify",
+        chat_id=target_telegram_id,
+    )

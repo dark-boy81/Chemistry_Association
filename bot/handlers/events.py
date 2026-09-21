@@ -43,6 +43,7 @@ from bot.keyboards import BTN_CANCEL, cancel_reply_keyboard, main_reply_keyboard
 from bot.notifications import broadcast_to_all_users, try_promote_waitlist
 from bot.tz import local_to_utc_naive, utc_naive_to_local_str
 from bot.utils.rate_limit import format_wait, receipt_limiter
+from bot.utils.safe_send import safe_send
 from bot.utils.receipts import extract_receipt, send_receipt_message
 from bot.utils.validation import (
     MAX_ADMIN_MESSAGE_LEN,
@@ -434,15 +435,16 @@ async def offer_receipt_received(update: Update, context: ContextTypes.DEFAULT_T
         [[InlineKeyboardButton("🧾 بررسی فیش", callback_data=f"admin_receipt_view_{registration_id}")]]
     )
     for admin_telegram_id in admin_ids:
-        try:
-            await context.bot.send_message(
+        await safe_send(
+            context.bot.send_message(
                 chat_id=admin_telegram_id,
                 text=f"🧾 فیش جدیدی در انتظار بررسی است (از لیست انتظار).\n\n"
                 f"رویداد: {event_title}\nکد پیگیری: {tracking_code}",
                 reply_markup=notify_keyboard,
-            )
-        except Exception:
-            pass
+            ),
+            context="offer_receipt_admin_notify",
+            chat_id=admin_telegram_id,
+        )
 
 
 # --- «فعالیت‌های من»: لیست و جزئیات ثبت‌نام‌های خود کاربر ---
@@ -741,44 +743,48 @@ async def _finalize_registration(
             [[InlineKeyboardButton("🧾 بررسی فیش", callback_data=f"admin_receipt_view_{registration_id}")]]
         )
         for admin_telegram_id in admin_ids:
-            try:
-                await context.bot.send_message(
+            await safe_send(
+                context.bot.send_message(
                     chat_id=admin_telegram_id,
                     text=f"🧾 فیش جدیدی در انتظار بررسی است.\n\nرویداد: {event_title}\nکد پیگیری: {tracking_code}",
                     reply_markup=notify_keyboard,
-                )
-            except Exception:
-                pass
+                ),
+                context="new_receipt_admin_notify",
+                chat_id=admin_telegram_id,
+            )
 
     elif final_status == RegistrationStatus.APPROVED:
         # ثبت‌نام رایگان و خودکار تایید‌شده — نیازی به اقدام ادمین نیست، فقط اطلاع‌رسانی
         for admin_telegram_id in admin_ids:
-            try:
-                await context.bot.send_message(
+            await safe_send(
+                context.bot.send_message(
                     chat_id=admin_telegram_id,
                     text=f"✅ ثبت‌نام رایگان جدید در «{event_title}»\nکاربر: {user_label}\nکد پیگیری: {tracking_code}",
-                )
-            except Exception:
-                pass
+                ),
+                context="free_registration_admin_notify",
+                chat_id=admin_telegram_id,
+            )
         if taken_before + 1 >= event_capacity:
             for admin_telegram_id in admin_ids:
-                try:
-                    await context.bot.send_message(
+                await safe_send(
+                    context.bot.send_message(
                         chat_id=admin_telegram_id, text=f"🎉 رویداد «{event_title}» به ظرفیت کامل رسید."
-                    )
-                except Exception:
-                    pass
+                    ),
+                    context="event_full_admin_notify",
+                    chat_id=admin_telegram_id,
+                )
 
     elif final_status == RegistrationStatus.WAITLISTED:
         for admin_telegram_id in admin_ids:
-            try:
-                await context.bot.send_message(
+            await safe_send(
+                context.bot.send_message(
                     chat_id=admin_telegram_id,
                     text=f"🕒 ثبت‌نام جدید در لیست انتظار «{event_title}» (ظرفیت پر است)\n"
                     f"کاربر: {user_label}\nکد پیگیری: {tracking_code}",
-                )
-            except Exception:
-                pass
+                ),
+                context="waitlisted_admin_notify",
+                chat_id=admin_telegram_id,
+            )
 
     return ConversationHandler.END
 
@@ -1078,6 +1084,7 @@ async def admin_event_registrant_delete_confirm_callback(update: Update, context
         session.commit()
     except Exception:
         session.rollback()
+        logger.exception("خطا در حذف ثبت‌نام توسط ادمین (registration_id=%s)", registration_id)
         await query.edit_message_text("⚠️ خطایی رخ داد. دوباره تلاش کنید.")
         return
     finally:
@@ -1096,13 +1103,14 @@ async def admin_event_registrant_delete_confirm_callback(update: Update, context
     await query.edit_message_text("✅ ثبت‌نام حذف شد.", reply_markup=keyboard)
 
     if user_telegram_id:
-        try:
-            await context.bot.send_message(
+        await safe_send(
+            context.bot.send_message(
                 chat_id=user_telegram_id,
                 text=f"⚠️ ثبت‌نام شما برای «{event_title}» (کد پیگیری {tracking_code}) توسط ادمین حذف شد.",
-            )
-        except Exception:
-            pass
+            ),
+            context="registration_deleted_by_admin_notify",
+            chat_id=user_telegram_id,
+        )
 
     await try_promote_waitlist(context.bot, event_id)
 
@@ -1491,10 +1499,11 @@ async def admin_event_edit_receive_value(update: Update, context: ContextTypes.D
 
     if notify_recipients and notify_text:
         for telegram_id in notify_recipients:
-            try:
-                await context.bot.send_message(chat_id=telegram_id, text=f"⚠️ {notify_text}")
-            except Exception:
-                pass
+            await safe_send(
+                context.bot.send_message(chat_id=telegram_id, text=f"⚠️ {notify_text}"),
+                context="event_edit_notify",
+                chat_id=telegram_id,
+            )
             await asyncio.sleep(0.05)
 
     if capacity_increased:
@@ -1596,6 +1605,7 @@ async def admin_event_delete_confirm_callback(update: Update, context: ContextTy
         session.commit()
     except Exception:
         session.rollback()
+        logger.exception("خطا در حذف رویداد (event_id=%s)", event_id)
         await query.edit_message_text("⚠️ خطایی هنگام حذف رخ داد. دوباره تلاش کنید.")
         return
     finally:
@@ -1675,12 +1685,13 @@ async def admin_event_cancelev_receive(update: Update, context: ContextTypes.DEF
     )
 
     for telegram_id in recipients:
-        try:
-            await context.bot.send_message(
+        await safe_send(
+            context.bot.send_message(
                 chat_id=telegram_id, text=f"⚠️ رویداد «{title}» لغو شد.\n\nپیام ادمین: {message_text}"
-            )
-        except Exception:
-            pass
+            ),
+            context="event_cancelled_notify",
+            chat_id=telegram_id,
+        )
         await asyncio.sleep(0.05)
 
     return ConversationHandler.END
@@ -1788,12 +1799,13 @@ async def admin_event_notify_receive(update: Update, context: ContextTypes.DEFAU
     )
 
     for telegram_id in recipients:
-        try:
-            await context.bot.send_message(
+        await safe_send(
+            context.bot.send_message(
                 chat_id=telegram_id, text=f"📢 پیام از ادمین درباره رویداد «{title}»:\n\n{text}"
-            )
-        except Exception:
-            pass
+            ),
+            context="event_notify_participants",
+            chat_id=telegram_id,
+        )
         await asyncio.sleep(0.05)
 
     await context.bot.send_message(chat_id=update.effective_user.id, text="✅ پیام ارسال شد.")
@@ -1925,8 +1937,8 @@ async def admin_receipt_view_callback(update: Update, context: ContextTypes.DEFA
             )
         try:
             await query.delete_message()
-        except Exception:
-            pass
+        except TelegramError:
+            logger.info("حذف پیام قدیمی فیش ممکن نبود (registration_id=%s)", registration_id)
     else:
         await query.edit_message_text(caption, reply_markup=keyboard)
 
@@ -1988,27 +2000,35 @@ async def _decide_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE, ap
             await query.message.edit_caption(caption=f"{query.message.caption}\n\nنتیجه: {result_text}")
         else:
             await query.edit_message_text(f"{query.message.text}\n\nنتیجه: {result_text}")
-    except Exception:
-        pass
+    except TelegramError:
+        logger.info("ویرایش پیام ادمین بعد از تصمیم فیش ممکن نبود (tracking_code=%s)", tracking_code)
 
     if user_telegram_id:
         status_text = "تایید شد ✅" if approve else "متاسفانه رد شد ❌"
         extra = "" if approve else "\n\nمی‌توانید دوباره برای این رویداد ثبت‌نام کنید."
-        await context.bot.send_message(
+        # باگ رفع‌شده: قبلاً این ارسال بدون try/except بود، پس اگر کاربر ربات را بلاک کرده
+        # بود (Forbidden) خط بعدی — ارتقای لیست انتظار برای رد‌شده‌ها — اصلاً اجرا نمی‌شد و
+        # صندلی آزادشده برای نفر بعدی خالی می‌ماند.
+        await safe_send(
+            context.bot.send_message(
+                chat_id=user_telegram_id,
+                text=f"ثبت‌نام شما برای «{event_title}» (کد پیگیری {tracking_code}) {status_text}{extra}",
+            ),
+            context="receipt_decision_notify",
             chat_id=user_telegram_id,
-            text=f"ثبت‌نام شما برای «{event_title}» (کد پیگیری {tracking_code}) {status_text}{extra}",
         )
 
     if not approve:
         await try_promote_waitlist(context.bot, event_id)
     elif just_became_full:
         for admin_telegram_id in admin_ids_for_full:
-            try:
-                await context.bot.send_message(
+            await safe_send(
+                context.bot.send_message(
                     chat_id=admin_telegram_id, text=f"🎉 رویداد «{event_title}» به ظرفیت کامل رسید."
-                )
-            except Exception:
-                pass
+                ),
+                context="event_full_admin_notify",
+                chat_id=admin_telegram_id,
+            )
 
 
 async def admin_receipt_approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

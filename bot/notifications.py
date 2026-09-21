@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from telegram.ext import ContextTypes
 
 from bot.tz import utc_naive_to_local_str
+from bot.utils.safe_send import safe_send
 from database.db import get_session
 from database.models import Event, Registration, RegistrationStatus, UserAccount
 
@@ -34,10 +35,11 @@ async def broadcast_to_all_users(bot, text: str, reply_markup=None) -> None:
         session.close()
 
     for telegram_id in telegram_ids:
-        try:
-            await bot.send_message(chat_id=telegram_id, text=text, reply_markup=reply_markup)
-        except Exception:
-            pass
+        await safe_send(
+            bot.send_message(chat_id=telegram_id, text=text, reply_markup=reply_markup),
+            context="broadcast_to_all_users",
+            chat_id=telegram_id,
+        )
         await asyncio.sleep(0.05)  # جلوگیری از برخورد به محدودیت نرخ ارسال تلگرام
 
 
@@ -105,10 +107,11 @@ async def try_promote_waitlist(bot, event_id: str) -> None:
             f"واریزی را همینجا برای ربات ارسال کنید.{card_line}\n\n"
             "⚠️ اگر تا پایان این مهلت فیش ارسال نشود، نوبت به نفر بعدی لیست انتظار داده می‌شود."
         )
-    try:
-        await bot.send_message(chat_id=user_telegram_id, text=text)
-    except Exception:
-        pass
+    await safe_send(
+        bot.send_message(chat_id=user_telegram_id, text=text),
+        context="waitlist_offer_notify",
+        chat_id=user_telegram_id,
+    )
 
 
 async def check_expired_offers_job(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -142,16 +145,17 @@ async def check_expired_offers_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     for telegram_id, title, event_id in to_process:
         if telegram_id:
-            try:
-                await context.bot.send_message(
+            await safe_send(
+                context.bot.send_message(
                     chat_id=telegram_id,
                     text=(
                         f"⏰ مهلت {WAITLIST_OFFER_HOURS} ساعته پرداخت برای «{title}» به پایان رسید و نوبت شما "
                         "به نفر بعدی لیست انتظار داده شد. در صورت تمایل می‌توانید دوباره ثبت‌نام کنید."
                     ),
-                )
-            except Exception:
-                pass
+                ),
+                context="waitlist_offer_expired_notify",
+                chat_id=telegram_id,
+            )
         await try_promote_waitlist(context.bot, event_id)
 
 
@@ -193,11 +197,12 @@ async def send_event_reminders_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         session.close()
 
     for telegram_id, title, event_date in to_remind:
-        try:
-            await context.bot.send_message(
+        await safe_send(
+            context.bot.send_message(
                 chat_id=telegram_id,
                 text=f"⏰ یادآوری: رویداد «{title}» فردا ({utc_naive_to_local_str(event_date)}) برگزار می‌شود.",
-            )
-        except Exception:
-            pass
+            ),
+            context="event_reminder_notify",
+            chat_id=telegram_id,
+        )
         await asyncio.sleep(0.05)

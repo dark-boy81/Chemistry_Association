@@ -11,6 +11,7 @@
     uvicorn server:app --host 0.0.0.0 --port $PORT
 """
 import hmac
+import json
 import logging
 
 from fastapi import FastAPI, Request, Response
@@ -78,6 +79,11 @@ def _secret_matches(header_value) -> bool:
     return hmac.compare_digest(header_value.encode("utf-8"), WEBHOOK_SECRET.encode("utf-8"))
 
 
+# سقف اندازه‌ی بدنه‌ی درخواست (Defense in depth؛ Telegram خودش هرگز چنین درخواست‌های
+# بزرگی نمی‌فرستد — این فقط جلوی درخواست‌های عجیب را قبل از پردازش JSON می‌گیرد)
+MAX_WEBHOOK_BODY_BYTES = 1_000_000  # ۱ مگابایت
+
+
 @app.post(WEBHOOK_PATH)
 async def telegram_webhook(request: Request) -> Response:
     secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
@@ -85,7 +91,29 @@ async def telegram_webhook(request: Request) -> Response:
         logger.warning("درخواست webhook با secret token نامعتبر رد شد.")
         return Response(status_code=403)
 
-    data = await request.json()
-    update = Update.de_json(data, telegram_app.bot)
-    await telegram_app.process_update(update)
+    body = await request.body()
+    if len(body) > MAX_WEBHOOK_BODY_BYTES:
+        logger.warning("درخواست webhook به‌خاطر حجم زیاد رد شد (%s بایت).", len(body))
+        return Response(status_code=413)
+
+    try:
+        data = json.loads(body)
+        update = Update.de_json(data, telegram_app.bot)
+    except (ValueError, TypeError, AttributeError) as exc:
+        # بدنه‌ی نامعتبر: نه JSON درست (ValueError از json.loads)، یا JSON معتبر ولی ساختار
+        # Update نامعتبر — مثلاً رشته یا لیست به‌جای dict (AttributeError)، یا dict بدون
+        # فیلدهای لازم مثل update_id (TypeError از سازنده‌ی Update). de_json خودش فقط برای
+        # ورودی «خالی» (None/{}) مقدار None برمی‌گرداند، نه برای هر ورودی نامعتبری.
+        logger.warning("بدنه‌ی webhook قابل تجزیه نبود: %s", exc)
+        return Response(status_code=400)
+
+    if update is None:
+        logger.warning("بدنه‌ی webhook یک Update معتبر تلگرام نبود.")
+        return Response(status_code=400)
+
+    # به‌جای پردازش مستقیم و همزمان با درخواست HTTP (که در صورت کند بودن یک Handler باعث
+    # timeout پاسخ به تلگرام و ارسال دوباره‌ی همان آپدیت می‌شد)، آپدیت به صف داخلی PTB اضافه
+    # می‌شود. telegram_app.start() (در startup) یک تسک پس‌زمینه دارد که همین صف را می‌خواند
+    # و آپدیت‌ها را به‌ترتیب و جدا از چرخه‌ی درخواست/پاسخ این endpoint پردازش می‌کند.
+    await telegram_app.update_queue.put(update)
     return Response(status_code=200)

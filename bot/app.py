@@ -2,7 +2,9 @@
 ساخت و پیکربندی Application ربات تلگرام (ثبت همه هندلرها) — این ماژول مستقل از حالت
 اجرا (polling یا webhook) است تا هم از server.py و هم از bot/main.py قابل استفاده باشد.
 """
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
+import logging
+
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from bot.handlers.admin_menu import admin_menu_callback, admin_menu_text_entry
 from bot.handlers.admins import (
@@ -245,4 +247,19 @@ def build_application() -> Application:
     # Job زمان‌بندی‌شده: هر ۱۰ دقیقه بررسی پیشنهادهای پرداخت منقضی‌شده لیست انتظار
     application.job_queue.run_repeating(check_expired_offers_job, interval=600, first=30)
 
+    application.add_error_handler(_log_unhandled_error)
+
     return application
+
+
+logger = logging.getLogger(__name__)
+
+
+async def _log_unhandled_error(update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Error handler سراسری PTB: هر استثنای مدیریت‌نشده‌ای که از داخل هر Handler یا Job (شامل
+    Jobهای زمان‌بندی‌شده) بیرون بزند، از اینجا عبور می‌کند. بدون این، چنین خطایی فقط در
+    stderr داخلی کتابخانه چاپ می‌شد و ممکن بود در لاگ‌های Render گم شود یا کل Job را بدون
+    ثبت دلیل متوقف کند. اینجا چیزی را "حل" نمی‌کنیم؛ فقط مطمئن می‌شویم دیده می‌شود.
+    """
+    logger.exception("خطای مدیریت‌نشده در پردازش آپدیت: %s", update, exc_info=context.error)

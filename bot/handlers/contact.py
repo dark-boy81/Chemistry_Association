@@ -16,6 +16,7 @@ from telegram.ext import (
 from bot.handlers.start import is_admin_telegram_id
 from bot.keyboards import BTN_CANCEL, cancel_reply_keyboard, main_reply_keyboard
 from bot.utils.rate_limit import contact_limiter, format_wait
+from bot.utils.safe_send import safe_send
 from bot.utils.validation import MAX_ADMIN_MESSAGE_LEN, MAX_CONTACT_MESSAGE_LEN, length_error
 from database.db import get_session
 from database.models import Admin, MessageDirection, SupportMessage, UserAccount
@@ -81,14 +82,15 @@ async def contact_receive_message(update: Update, context: ContextTypes.DEFAULT_
     sender_name = tg_user.full_name or tg_user.username or str(tg_user.id)
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("✍️ پاسخ", callback_data=f"admin_reply_{message_id}")]])
     for admin_telegram_id in admin_ids:
-        try:
-            await context.bot.send_message(
+        await safe_send(
+            context.bot.send_message(
                 chat_id=admin_telegram_id,
                 text=f"📩 پیام جدید از {sender_name}:\n\n{text}",
                 reply_markup=keyboard,
-            )
-        except Exception:
-            continue
+            ),
+            context="contact_message_admin_notify",
+            chat_id=admin_telegram_id,
+        )
 
     admin = is_admin_telegram_id(tg_user.id)
     await update.message.reply_text(
@@ -181,12 +183,13 @@ async def admin_reply_receive(update: Update, context: ContextTypes.DEFAULT_TYPE
     finally:
         session.close()
 
-    try:
-        await context.bot.send_message(
+    await safe_send(
+        context.bot.send_message(
             chat_id=reply_to["user_telegram_id"], text=f"📬 پاسخ از طرف ادمین:\n\n{text}"
-        )
-    except Exception:
-        pass
+        ),
+        context="admin_reply_notify",
+        chat_id=reply_to["user_telegram_id"],
+    )
 
     context.user_data.pop("reply_to", None)
     await update.message.reply_text("✅ پاسخ ارسال شد.", reply_markup=main_reply_keyboard(True))

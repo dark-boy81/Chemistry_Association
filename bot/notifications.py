@@ -43,6 +43,26 @@ async def broadcast_to_all_users(bot, text: str, reply_markup=None) -> None:
         await asyncio.sleep(0.05)  # جلوگیری از برخورد به محدودیت نرخ ارسال تلگرام
 
 
+async def copy_to_all_users(bot, from_chat_id: int, message_id: int) -> None:
+    """یک پیام مشخص (با message_id، در چت from_chat_id) را بدون هیچ تغییری برای همه
+    کاربران کپی می‌کند — برای پست‌های رسانه‌ای (عکس/ویدیو/فایل) یا فوروارد‌شده، که باید
+    دقیقاً همان‌طور که ادمین فرستاده به دست کاربرها برسد. copy_message خودش نوع پیام
+    (متن، عکس+کپشن، فایل، ...) را تشخیص می‌دهد؛ اینجا لازم نیست نوعش را بدانیم."""
+    session = get_session()
+    try:
+        telegram_ids = [u.telegram_id for u in session.query(UserAccount).all()]
+    finally:
+        session.close()
+
+    for telegram_id in telegram_ids:
+        await safe_send(
+            bot.copy_message(chat_id=telegram_id, from_chat_id=from_chat_id, message_id=message_id),
+            context="copy_to_all_users",
+            chat_id=telegram_id,
+        )
+        await asyncio.sleep(0.05)
+
+
 async def try_promote_waitlist(bot, event_id: str) -> None:
     """وقتی ثبت‌نامی لغو/رد می‌شود یا ظرفیت زیاد می‌شود، اولین نفر در لیست انتظار را
     ارتقا می‌دهد:

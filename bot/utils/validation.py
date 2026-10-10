@@ -25,8 +25,14 @@ MAX_CARD_NUMBER_LEN = 64  # ستون دیتابیس String(64)
 MAX_EVENT_CAPACITY = 5000  # ستون دیتابیس Integer
 MAX_EVENT_PRICE = 999_999_999  # تومان؛ ستون دیتابیس Numeric(12, 0)
 
+# --- سقف‌های واقعی خود تلگرام (نه عدد دلخواه ما) ---
+# برای جاهایی که پیام مستقیماً به شکل خودش (کپی/فوروارد) به کاربر دیگر می‌رود و
+# محدودکردنش با یک عدد دلخواه معنی ندارد؛ تلگرام خودش پیام بلندتر از این را رد می‌کند.
+TELEGRAM_TEXT_MESSAGE_LIMIT = 4096
+TELEGRAM_CAPTION_LIMIT = 1024
+
 # --- ورودی‌های ادمین: سایر بخش‌ها ---
-MAX_ADMIN_MESSAGE_LEN = 3000  # پیام همگانی / پیام لغو رویداد / پیام به شرکت‌کنندگان
+MAX_ADMIN_MESSAGE_LEN = 3000  # پیام لغو رویداد / پیام به شرکت‌کنندگان رویداد (پیام همگانی جدا تعریف شده، در broadcast.py)
 MAX_FAQ_QUESTION_LEN = 300
 MAX_FAQ_ANSWER_LEN = 3000
 MAX_JOURNAL_TITLE_LEN = 200  # ستون دیتابیس String(300)؛ در caption فایل PDF هم استفاده می‌شود
